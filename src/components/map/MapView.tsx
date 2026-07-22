@@ -16,6 +16,7 @@ import {
 import { removeReplacementGeoLayers } from "@/lib/map/replaced-cover";
 import {
   applySelfHostedTiles,
+  stripBrokenBuildingPromoteId,
   FALLBACK_STYLE_HINT,
   getMapEnvConfig,
 } from "@/lib/map/map-style";
@@ -26,12 +27,12 @@ import {
   applyAtmosphere,
   type AtmosphereOptions,
 } from "@/lib/map/atmosphere";
-import { applyF4mapBasemapLook } from "@/lib/map/f4-style-polish";
+import { applyBasemapLook } from "@/lib/map/basemap-polish";
 import { applyTerrain } from "@/lib/map/terrain";
 import {
   cinematicFlyTo,
   createIdleOrbit,
-  resetToF4View,
+  resetToDefaultView,
 } from "@/lib/map/camera-presets";
 import {
   ensureHighlightLayers,
@@ -47,6 +48,10 @@ import {
 } from "./CustomBuildingLayer";
 import { MapControls } from "./MapControls";
 import { WeatherOverlay } from "./WeatherOverlay";
+import {
+  attachVehicleTraffic,
+  type VehicleTrafficHandle,
+} from "./VehicleTrafficLayer";
 
 type OrbitHandle = ReturnType<typeof createIdleOrbit>;
 
@@ -62,8 +67,8 @@ type Props = {
   onLayerStatus: (status: CustomLayerStatus) => void;
   onDebug: (snapshot: MapDebugSnapshot) => void;
   focusTarget: { lng: number; lat: number } | null;
-  /** Bump to trigger cinematic reset to F4 demo camera. */
-  resetF4Tick?: number;
+  /** Bump to trigger cinematic reset to default camera. */
+  resetViewTick?: number;
 };
 
 export function MapView(props: Props) {
@@ -77,6 +82,7 @@ export function MapView(props: Props) {
   const selectionCacheRef = useRef<Map<string, SelectedBuilding>>(new Map());
   const previousHiddenIdsRef = useRef<Array<string | number>>([]);
   const orbitRef = useRef<OrbitHandle | null>(null);
+  const vehiclesRef = useRef<VehicleTrafficHandle | null>(null);
   const propsRef = useRef(props);
   const hideSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastHideKeyRef = useRef<string>("");
@@ -144,7 +150,10 @@ export function MapView(props: Props) {
     });
 
     const hideKey = targets
-      .map((t) => String(t.featureId ?? ""))
+      .map(
+        (t) =>
+          `${String(t.featureId ?? "")}:${String(t.filterPropertyKey ?? "")}:${String(t.filterPropertyValue ?? "")}`,
+      )
       .sort()
       .join("|");
     if (!opts?.force && hideKey === lastHideKeyRef.current && previousHiddenIdsRef.current.length > 0) {
@@ -200,14 +209,16 @@ export function MapView(props: Props) {
 
     const boot = async (): Promise<void> => {
       try {
-        let style: string | StyleSpecification = env.styleUrl as string;
-        if (env.tilesUrl) {
+        let style: StyleSpecification;
+        {
           const response = await fetch(env.styleUrl as string);
           if (!response.ok) {
             throw new Error(`Failed to fetch map style (${response.status}).`);
           }
           const json = (await response.json()) as StyleSpecification;
-          style = applySelfHostedTiles(json, env.tilesUrl);
+          style = env.tilesUrl
+            ? applySelfHostedTiles(json, env.tilesUrl)
+            : stripBrokenBuildingPromoteId(json);
         }
 
         if (!containerRef.current || cancelled) return;
@@ -227,7 +238,7 @@ export function MapView(props: Props) {
           canvasContextAttributes: { antialias: true },
         });
 
-        // Smoother F4-like wheel zoom.
+        // Smoother wheel zoom for pitched 3D navigation.
         map.scrollZoom.setWheelZoomRate(1 / 450);
         map.scrollZoom.setZoomRate(1 / 200);
 
@@ -247,8 +258,8 @@ export function MapView(props: Props) {
             layerInfoRef.current = info;
             ensureHighlightLayers(map);
 
-            // F4map clean architectural basemap (white buildings, dark roads, parks).
-            applyF4mapBasemapLook(map);
+            // Clean architectural basemap (white buildings, dark roads, parks).
+            applyBasemapLook(map);
             stylePolishedRef.current = true;
             applyAtmosphere(map, propsRef.current.atmosphereInput);
             applyTerrain(
@@ -261,6 +272,10 @@ export function MapView(props: Props) {
             orbitRef.current = orbit;
             orbit.setEnabled(propsRef.current.graphicOptions.idleOrbit);
             if (propsRef.current.graphicOptions.idleOrbit) orbit.start();
+
+            const vehicles = attachVehicleTraffic(map);
+            vehiclesRef.current = vehicles;
+            vehicles.setEnabled(propsRef.current.graphicOptions.showVehicles);
 
             detachSelection = attachBuildingSelection(map, info, {
               onSelect: (building) => {
@@ -325,6 +340,8 @@ export function MapView(props: Props) {
           unsubscribeStatus?.();
           orbitRef.current?.destroy();
           orbitRef.current = null;
+          vehiclesRef.current?.destroy();
+          vehiclesRef.current = null;
           if (hideSyncTimerRef.current) clearTimeout(hideSyncTimerRef.current);
           if (onSourceData) map.off("sourcedata", onSourceData);
           setMapReady(false);
@@ -388,10 +405,12 @@ export function MapView(props: Props) {
     }
     custom.setModels(normalized);
     syncHiddenBuildings({ force: true });
+    const retry = window.setTimeout(() => syncHiddenBuildings({ force: true }), 450);
     if (map.getLayer(CUSTOM_LAYER_ID)) {
       map.moveLayer(CUSTOM_LAYER_ID);
     }
     setStatusText(`Replacements: ${normalized.length}`);
+    return () => window.clearTimeout(retry);
   }, [props.replacements, syncHiddenBuildings, mapReady]);
 
   useEffect(() => {
@@ -409,7 +428,7 @@ export function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !mapReady || !map.isStyleLoaded()) return;
     if (!stylePolishedRef.current) {
-      applyF4mapBasemapLook(map);
+      applyBasemapLook(map);
       stylePolishedRef.current = true;
     }
     applyAtmosphere(map, props.atmosphereInput);
@@ -419,22 +438,23 @@ export function MapView(props: Props) {
       props.graphicOptions.terrainExaggeration,
     );
     orbitRef.current?.setEnabled(props.graphicOptions.idleOrbit);
+    vehiclesRef.current?.setEnabled(props.graphicOptions.showVehicles);
     if (replacementsRef.current.length > 0) {
       syncHiddenBuildings({ force: true });
     }
   }, [props.atmosphereInput, props.graphicOptions, mapReady, syncHiddenBuildings]);
 
   useEffect(() => {
-    if (!mapReady || !props.resetF4Tick) return;
+    if (!mapReady || !props.resetViewTick) return;
     const map = mapRef.current;
     if (!map) return;
-    resetToF4View(map);
-  }, [props.resetF4Tick, mapReady]);
+    resetToDefaultView(map);
+  }, [props.resetViewTick, mapReady]);
 
   const resetView = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
-    resetToF4View(map);
+    resetToDefaultView(map);
   }, []);
 
   return (

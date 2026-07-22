@@ -300,6 +300,65 @@ export function extractClickedPolygon(
   };
 }
 
+/** Other outer rings of a MultiPolygon that were not selected. */
+export function extractSiblingPolygons(
+  geometry: BuildingGeometry,
+  kept: GeoJSON.Polygon,
+): GeoJSON.Polygon[] {
+  if (geometry.type === "Polygon") return [];
+
+  const keptArea = footprintArea(kept);
+  const [keptLng, keptLat] = computeFootprintCenter(kept);
+  const siblings: GeoJSON.Polygon[] = [];
+
+  for (const rings of geometry.coordinates) {
+    const candidate: GeoJSON.Polygon = {
+      type: "Polygon",
+      coordinates: rings.map((ring) => ring.map((c) => [...c])),
+    };
+    const area = footprintArea(candidate);
+    const [lng, lat] = computeFootprintCenter(candidate);
+    const same =
+      Math.abs(area - keptArea) < 1e-14 &&
+      Math.abs(lng - keptLng) < 1e-8 &&
+      Math.abs(lat - keptLat) < 1e-8;
+    if (!same) siblings.push(candidate);
+  }
+  return siblings;
+}
+
+/**
+ * Anchor near the click so the GLB sits on the clicked house, not a courtyard centroid.
+ */
+export function anchorNearClick(
+  geometry: BuildingGeometry,
+  clickLng: number,
+  clickLat: number,
+): [number, number] {
+  if (pointInBuilding(clickLng, clickLat, geometry)) {
+    return [clickLng, clickLat];
+  }
+  // Nearest vertex on outer ring(s).
+  let best: [number, number] = computeFootprintCenter(geometry);
+  let bestDist = Number.POSITIVE_INFINITY;
+  const rings =
+    geometry.type === "Polygon"
+      ? [geometry.coordinates[0] ?? []]
+      : geometry.coordinates.map((p) => p[0] ?? []);
+  for (const ring of rings) {
+    for (const point of ring) {
+      const lng = point[0] ?? 0;
+      const lat = point[1] ?? 0;
+      const d = (lng - clickLng) ** 2 + (lat - clickLat) ** 2;
+      if (d < bestDist) {
+        bestDist = d;
+        best = [lng, lat];
+      }
+    }
+  }
+  return best;
+}
+
 export function extractHeightFields(properties: Record<string, unknown>): {
   height: number | null;
   minHeight: number | null;
@@ -353,6 +412,9 @@ function coerceId(value: string): string | number {
   return value;
 }
 
+/** ~250 m × 250 m in deg² — larger footprints are block/courtyard rings. */
+const MAX_SAFE_HIDE_AREA = 0.00001;
+
 export function buildSelectedBuilding(input: {
   featureId: string | number | undefined;
   source: string;
@@ -364,8 +426,22 @@ export function buildSelectedBuilding(input: {
 }): SelectedBuilding {
   const properties = asRecord(input.properties);
 
+  const sourceGeometry: BuildingGeometry =
+    input.geometry.type === "Polygon"
+      ? {
+          type: "Polygon",
+          coordinates: input.geometry.coordinates.map((ring) => ring.map((c) => [...c])),
+        }
+      : {
+          type: "MultiPolygon",
+          coordinates: input.geometry.coordinates.map((poly) =>
+            poly.map((ring) => ring.map((c) => [...c])),
+          ),
+        };
+
   // Always keep a single Polygon under the click — never highlight a whole MultiPolygon cluster.
   const geometry = extractClickedPolygon(input.geometry, input.clickLng, input.clickLat);
+  const preservedSiblings = extractSiblingPolygons(sourceGeometry, geometry);
 
   const identity = resolveBuildingIdentity({
     featureId: input.featureId,
@@ -396,12 +472,41 @@ export function buildSelectedBuilding(input: {
     }
   }
 
+  // Prefer the real osm_id property key present on the feature.
+  if (!filterPropertyKey) {
+    for (const key of OSM_KEYS) {
+      if (properties[key] !== undefined && properties[key] !== null) {
+        filterPropertyKey = key;
+        break;
+      }
+    }
+  }
+  let filterPropertyValue = filterMeta.filterPropertyValue;
+  if (filterPropertyKey && properties[filterPropertyKey] != null) {
+    const raw = properties[filterPropertyKey];
+    if (typeof raw === "number" || typeof raw === "string") {
+      filterPropertyValue = typeof raw === "string" && /^-?\d+$/.test(raw) ? Number(raw) : raw;
+    }
+  }
+
+  const fullArea = footprintArea(sourceGeometry);
+  const canHideBySize =
+    fullArea <= MAX_SAFE_HIDE_AREA || preservedSiblings.length > 0;
+
+  // Always allow hide when we have a stable vector id — exact match won't wipe neighbors.
+  const hasStableId =
+    input.featureId !== undefined &&
+    input.featureId !== null &&
+    String(input.featureId).length > 0;
+
   return {
     featureId: input.featureId,
     source: input.source,
     sourceLayer: input.sourceLayer,
     properties,
     geometry,
+    sourceGeometry,
+    preservedSiblings,
     clickLng: input.clickLng,
     clickLat: input.clickLat,
     centerLng,
@@ -413,10 +518,10 @@ export function buildSelectedBuilding(input: {
     buildingType: readString(properties, ["building", "type", "class"]),
     height,
     minHeight,
-    canFilterHide: filterMeta.canFilterHide,
+    canFilterHide: (filterMeta.canFilterHide && canHideBySize) || hasStableId,
     filterStrategy: filterMeta.filterStrategy,
     filterPropertyKey,
-    filterPropertyValue: filterMeta.filterPropertyValue,
+    filterPropertyValue,
   };
 }
 
@@ -432,6 +537,7 @@ export function formatBuildingDebug(building: SelectedBuilding): string {
     `  minHeight: ${building.minHeight ?? "—"}`,
     `  source: ${building.source} / ${building.sourceLayer ?? "—"}`,
     `  center: ${building.centerLng.toFixed(6)}, ${building.centerLat.toFixed(6)}`,
+    `  siblings: ${building.preservedSiblings.length}`,
     `  filter: ${building.filterStrategy} (canHide=${building.canFilterHide})`,
   ].join("\n");
 }

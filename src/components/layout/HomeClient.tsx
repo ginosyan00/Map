@@ -38,7 +38,7 @@ export function HomeClient() {
   const [debug, setDebug] = useState<MapDebugSnapshot>(EMPTY_DEBUG);
   const [layerStatus, setLayerStatus] = useState<CustomLayerStatus | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number } | null>(null);
-  const [resetF4Tick, setResetF4Tick] = useState(0);
+  const [resetViewTick, setResetViewTick] = useState(0);
 
   const pendingModelUrl = modelLoader.source?.url ?? DEFAULT_APPLY_MODEL_URL;
 
@@ -118,8 +118,8 @@ export function HomeClient() {
     [buildings],
   );
 
-  const onResetF4View = useCallback(() => {
-    setResetF4Tick((n) => n + 1);
+  const onResetDefaultView = useCallback(() => {
+    setResetViewTick((n) => n + 1);
   }, []);
 
   return (
@@ -128,8 +128,7 @@ export function HomeClient() {
         <div>
           <h1>OpenMapTiles → Custom GLB POC</h1>
           <p className="muted">
-            F4map-like 3D view + building → GLB replace. Graphic options control atmosphere and
-            camera feel.
+            MapLibre 3D map: select a building and replace it with a custom GLB model.
           </p>
         </div>
         <div className={`pill status-${headerStatus.replace(/\s+/g, "-")}`}>{headerStatus}</div>
@@ -143,7 +142,7 @@ export function HomeClient() {
             graphicOptions={graphic.options}
             atmosphereInput={graphic.atmosphereInput}
             focusTarget={focusTarget}
-            resetF4Tick={resetF4Tick}
+            resetViewTick={resetViewTick}
             onSelect={selectBuilding}
             onEmptyClick={clearSelection}
             onHideWarning={setHideWarning}
@@ -154,7 +153,7 @@ export function HomeClient() {
           <GraphicOptionsPanel
             options={graphic.options}
             onChange={graphic.patch}
-            onResetF4View={onResetF4View}
+            onResetView={onResetDefaultView}
           />
         </div>
 

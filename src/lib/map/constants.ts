@@ -25,8 +25,18 @@ export const REPLACED_COVER_SOURCE_ID = "replaced-building-cover-source";
 export const REPLACED_COVER_LAYER_ID = "replaced-building-cover";
 export const REPLACED_MODEL_SOURCE_ID = "replaced-building-model-source";
 export const REPLACED_MODEL_LAYER_ID = "replaced-building-model";
+/** Sibling MultiPolygon parts kept after hiding a shared parent feature. */
+export const PRESERVED_PARTS_SOURCE_ID = "preserved-building-parts-source";
+export const PRESERVED_PARTS_LAYER_ID = "preserved-building-parts";
 
 export const APP_BUILDING_EXTRUSION_LAYER_ID = "app-building-3d";
+
+export const VEHICLE_SOURCE_ID = "traffic-vehicles-source";
+export const VEHICLE_LAYER_ID = "traffic-vehicles";
+export const VEHICLE_SHADOW_LAYER_ID = "traffic-vehicles-shadow";
+export const VEHICLE_3D_LAYER_ID = "traffic-vehicles-three";
+/** 3D cars render at every zoom; mesh scale follows mercator meters. */
+export const VEHICLE_MIN_ZOOM = 0;
 
 export const STORAGE_KEY = "omt-glb-poc:custom-buildings:v1";
 

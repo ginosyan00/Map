@@ -1,5 +1,6 @@
 import type { Map as MapLibreMap, SkySpecification } from "maplibre-gl";
 import { listAllBuildingExtrusionLayers } from "./building-layer";
+import { buildingColorByHeight } from "./building-paint";
 
 export type TimeOfDay = "live" | "night" | "morning" | "noon" | "evening";
 export type WeatherMode = "sun" | "rain" | "snow";
@@ -27,7 +28,7 @@ type TimePreset = {
   buildingOpacity: number;
 };
 
-/** Daytime defaults match F4map screenshot: pale buildings, bright sky, strong side light. */
+/** Daytime defaults: pale buildings, bright sky, strong side light. */
 const TIME_PRESETS: Record<Exclude<TimeOfDay, "live">, TimePreset> = {
   night: {
     skyColor: "#0b1220",
@@ -101,7 +102,7 @@ function resolvePreset(timeOfDay: TimeOfDay): TimePreset {
 }
 
 /**
- * Apply F4-like sky/fog/light/building shade via MapLibre v5 setSky API.
+ * Apply sky/fog/light/building shade via MapLibre v5 setSky API.
  * @see https://maplibre.org/maplibre-gl-js/docs/examples/sky-fog-terrain/
  */
 export function applyAtmosphere(map: MapLibreMap, options: AtmosphereOptions): void {
@@ -168,7 +169,7 @@ function polishBuildingPaint(
     if (!map.getLayer(layer.layerId)) continue;
     try {
       map.setLayoutProperty(layer.layerId, "visibility", opts.visible ? "visible" : "none");
-      map.setPaintProperty(layer.layerId, "fill-extrusion-color", opts.color);
+      map.setPaintProperty(layer.layerId, "fill-extrusion-color", buildingColorByHeight(opts.color));
       map.setPaintProperty(layer.layerId, "fill-extrusion-opacity", opts.opacity);
       map.setPaintProperty(layer.layerId, "fill-extrusion-vertical-gradient", true);
     } catch {
@@ -189,7 +190,7 @@ function setLabelVisibility(map: MapLibreMap, visible: boolean): void {
   for (const layer of style.layers) {
     if (layer.type !== "symbol") continue;
     const id = layer.id.toLowerCase();
-    // Keep POIs hidden for F4-clean look even when labels on
+    // Keep POIs hidden for a cleaner look even when labels on
     if (id.includes("poi") || id.includes("housenumber")) {
       try {
         map.setLayoutProperty(layer.id, "visibility", "none");

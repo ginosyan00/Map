@@ -1,7 +1,7 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 
-/** Matches https://demo.f4map.com/#lat=40.2119757&lon=44.5236047&zoom=17&camera.theta=69&camera.phi=38 */
-export const F4_DEMO_VIEW = {
+/** Default camera: Yerevan downtown, pitched 3D view. */
+export const DEFAULT_VIEW = {
   center: [44.5236047, 40.2119757] as [number, number],
   zoom: 17,
   pitch: 69,
@@ -16,7 +16,6 @@ export type CinematicFlyOptions = {
   duration?: number;
 };
 
-/** Longer swoop similar to F4map camera moves. */
 export function cinematicFlyTo(map: MapLibreMap, options: CinematicFlyOptions): void {
   map.flyTo({
     center: options.center,
@@ -42,12 +41,12 @@ export function cinematicEaseTo(map: MapLibreMap, options: CinematicFlyOptions):
   });
 }
 
-export function resetToF4View(map: MapLibreMap): void {
+export function resetToDefaultView(map: MapLibreMap): void {
   cinematicEaseTo(map, {
-    center: F4_DEMO_VIEW.center,
-    zoom: F4_DEMO_VIEW.zoom,
-    pitch: F4_DEMO_VIEW.pitch,
-    bearing: F4_DEMO_VIEW.bearing,
+    center: DEFAULT_VIEW.center,
+    zoom: DEFAULT_VIEW.zoom,
+    pitch: DEFAULT_VIEW.pitch,
+    bearing: DEFAULT_VIEW.bearing,
     duration: 1600,
   });
 }

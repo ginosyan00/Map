@@ -7,7 +7,7 @@ import type { TimeOfDay, WeatherMode } from "@/lib/map/atmosphere";
 type Props = {
   options: GraphicOptions;
   onChange: (partial: Partial<GraphicOptions>) => void;
-  onResetF4View: () => void;
+  onResetView: () => void;
 };
 
 const TIMES: Array<{ id: TimeOfDay; label: string }> = [
@@ -24,7 +24,7 @@ const WEATHERS: Array<{ id: WeatherMode; label: string }> = [
   { id: "snow", label: "Snow" },
 ];
 
-export function GraphicOptionsPanel({ options, onChange, onResetF4View }: Props) {
+export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
   const [open, setOpen] = useState(false);
 
   if (!open) {
@@ -48,8 +48,8 @@ export function GraphicOptionsPanel({ options, onChange, onResetF4View }: Props)
       <header className="graphic-options-header">
         <h2>Graphic options</h2>
         <div className="graphic-options-actions">
-          <button type="button" className="btn tiny ghost" onClick={onResetF4View}>
-            F4 view
+          <button type="button" className="btn tiny ghost" onClick={onResetView}>
+            Reset view
           </button>
           <button
             type="button"
@@ -120,21 +120,6 @@ export function GraphicOptionsPanel({ options, onChange, onResetF4View }: Props)
       </section>
 
       <section className="graphic-section">
-        <h3>Traffic</h3>
-        <p className="muted small">
-          Cars / boats are not available on MapLibre (F4 proprietary).
-        </p>
-        <div className="graphic-chips">
-          <button type="button" className="chip" disabled>
-            Cars
-          </button>
-          <button type="button" className="chip" disabled>
-            Boats
-          </button>
-        </div>
-      </section>
-
-      <section className="graphic-section">
         <h3>Display</h3>
         <label className="graphic-toggle">
           <input
@@ -159,6 +144,14 @@ export function GraphicOptionsPanel({ options, onChange, onResetF4View }: Props)
             onChange={(e) => onChange({ showSky: e.target.checked })}
           />
           Sky / atmosphere
+        </label>
+        <label className="graphic-toggle">
+          <input
+            type="checkbox"
+            checked={options.showVehicles}
+            onChange={(e) => onChange({ showVehicles: e.target.checked })}
+          />
+          Vehicles (3D GLB)
         </label>
         <label className="graphic-toggle">
           <input

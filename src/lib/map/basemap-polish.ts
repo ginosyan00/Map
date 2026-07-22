@@ -1,11 +1,11 @@
 import type { Map as MapLibreMap, StyleSpecification } from "maplibre-gl";
 
 /**
- * Restyle OpenFreeMap/OMT layers toward F4map's clean architectural look:
+ * Restyle OpenFreeMap/OMT layers for a clean architectural look:
  * white extrusions, dark asphalt, green parks, soft ground, muted labels.
  * Does not touch fill-extrusion-height / base / filter (hide cache safe).
  */
-export function applyF4mapBasemapLook(map: MapLibreMap): void {
+export function applyBasemapLook(map: MapLibreMap): void {
   if (!map.isStyleLoaded()) return;
   const style = map.getStyle() as StyleSpecification | undefined;
   if (!style?.layers) return;
@@ -37,7 +37,6 @@ export function applyF4mapBasemapLook(map: MapLibreMap): void {
 
       if (type === "line") {
         if (isRoadFill(id) || isHighway(id)) {
-          // Asphalt
           if (id.includes("casing") || id.includes("case") || id.includes("outline")) {
             map.setPaintProperty(layer.id, "line-color", "#ffffff");
             map.setPaintProperty(layer.id, "line-opacity", 0.95);
@@ -59,18 +58,20 @@ export function applyF4mapBasemapLook(map: MapLibreMap): void {
 
       if (type === "fill-extrusion") {
         if (id.includes("building")) {
-          map.setPaintProperty(layer.id, "fill-extrusion-color", "#f3f2ef");
           map.setPaintProperty(layer.id, "fill-extrusion-opacity", 1);
           map.setPaintProperty(layer.id, "fill-extrusion-vertical-gradient", true);
-          map.setPaintProperty(layer.id, "fill-extrusion-ambient-occlusion-intensity", 0.35);
-          map.setPaintProperty(layer.id, "fill-extrusion-ambient-occlusion-radius", 4);
-          map.setPaintProperty(layer.id, "fill-extrusion-flood-light-intensity", 0);
+          try {
+            map.setPaintProperty(layer.id, "fill-extrusion-ambient-occlusion-intensity", 0.4);
+            map.setPaintProperty(layer.id, "fill-extrusion-ambient-occlusion-radius", 5);
+          } catch {
+            /* AO may be unsupported */
+          }
+          // Color/height grow applied once in building-layer first-render polish.
         }
         continue;
       }
 
       if (type === "symbol") {
-        // Quieter labels — F4map is sparse on POI noise
         if (id.includes("poi") || id.includes("housenumber") || id.includes("shop")) {
           map.setLayoutProperty(layer.id, "visibility", "none");
         } else if (id.includes("road") || id.includes("street") || id.includes("highway")) {
@@ -90,7 +91,6 @@ export function applyF4mapBasemapLook(map: MapLibreMap): void {
     }
   }
 
-  // Strong sun-like light so extrusions cast clear side shading (F4 daytime).
   try {
     map.setLight({
       anchor: "map",

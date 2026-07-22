@@ -8,13 +8,14 @@ import {
   pointInBuilding,
   resolveBuildingIdentity,
 } from "@/lib/map/building-identification";
-import { getBuildingQueryLayers } from "@/lib/map/building-layer";
+import { getAllBuildingQueryLayers } from "@/lib/map/building-layer";
 import type { BuildingLayerInfo } from "@/types/map";
 import {
   HIGHLIGHT_EXTRUSION_LAYER_ID,
   HIGHLIGHT_FILL_LAYER_ID,
   HIGHLIGHT_LINE_LAYER_ID,
   HIGHLIGHT_SOURCE_ID,
+  PRESERVED_PARTS_LAYER_ID,
   devLog,
 } from "@/lib/map/constants";
 
@@ -35,7 +36,8 @@ function isHighlightLayer(layerId: string | undefined): boolean {
     layerId === HIGHLIGHT_FILL_LAYER_ID ||
     layerId === HIGHLIGHT_LINE_LAYER_ID ||
     layerId === HIGHLIGHT_EXTRUSION_LAYER_ID ||
-    layerId === HIGHLIGHT_SOURCE_ID
+    layerId === HIGHLIGHT_SOURCE_ID ||
+    layerId === PRESERVED_PARTS_LAYER_ID
   );
 }
 
@@ -51,11 +53,32 @@ function featureIdentityKey(feature: MapGeoJSONFeature): string {
   return identityKey(identity);
 }
 
-/** Rough max footprint for a single house (~200m × 200m in deg² near mid-latitudes). */
-const MAX_SINGLE_BUILDING_AREA = 0.00004;
+/**
+ * Selection allows normal city buildings. Hide-safety (courtyard/block wipe)
+ * is enforced later in building-filter — not here.
+ * ~250 m × 250 m; MultiPolygon uses largest single outer ring.
+ */
+const MAX_SELECT_AREA = 0.00005;
+
+function selectionArea(geometry: BuildingGeometry): number {
+  if (geometry.type === "Polygon") return footprintArea(geometry);
+  let max = 0;
+  for (const polygon of geometry.coordinates) {
+    const ring = polygon[0] ?? [];
+    let area = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [x0, y0] = ring[j] as [number, number];
+      const [x1, y1] = ring[i] as [number, number];
+      area += x0 * y1 - x1 * y0;
+    }
+    max = Math.max(max, Math.abs(area / 2));
+  }
+  return max;
+}
 
 /**
  * Pick exactly one building under the cursor.
+ * Prefers smallest footprint that contains the click; always allows a hit.
  */
 export function pickSingleBuildingFeature(
   features: MapGeoJSONFeature[],
@@ -67,13 +90,13 @@ export function pickSingleBuildingFeature(
   for (const feature of features) {
     if (!isBuildingGeometry(feature.geometry)) continue;
     if (isHighlightLayer(feature.layer?.id)) continue;
-    // Skip absurdly large polygons (parks / blocks mistaken as buildings).
-    if (footprintArea(feature.geometry) > MAX_SINGLE_BUILDING_AREA) continue;
+    if (selectionArea(feature.geometry) > MAX_SELECT_AREA) continue;
     candidates.push(feature);
   }
 
+  // Soft fallback: still allow a pick if everything looked "large"
+  // (hide layer will refuse unsafe collapse).
   if (candidates.length === 0) {
-    // Fallback without area filter if everything was filtered out.
     for (const feature of features) {
       if (!isBuildingGeometry(feature.geometry)) continue;
       if (isHighlightLayer(feature.layer?.id)) continue;
@@ -92,31 +115,30 @@ export function pickSingleBuildingFeature(
       deduped.set(key, feature);
       continue;
     }
-    if (footprintArea(feature.geometry) < footprintArea(prev.geometry)) {
+    if (selectionArea(feature.geometry) < selectionArea(prev.geometry)) {
       deduped.set(key, feature);
     }
   }
 
   const unique = [...deduped.values()];
 
-  // Strong preference: footprint must contain the click (top/roof click).
   const containing = unique.filter(
     (feature) =>
       isBuildingGeometry(feature.geometry) &&
       pointInBuilding(clickLng, clickLat, feature.geometry),
   );
 
+  // Pitched façade clicks often miss footprint containment — still pick nearest small building.
   const pool = containing.length > 0 ? containing : unique;
 
   pool.sort((a, b) => {
     const ga = a.geometry;
     const gb = b.geometry;
     if (!isBuildingGeometry(ga) || !isBuildingGeometry(gb)) return 0;
-    // Prefer true Polygon over MultiPolygon, then smallest area.
     const typeScore = (g: BuildingGeometry) => (g.type === "Polygon" ? 0 : 1);
     const typeDiff = typeScore(ga) - typeScore(gb);
     if (typeDiff !== 0) return typeDiff;
-    return footprintArea(ga) - footprintArea(gb);
+    return selectionArea(ga) - selectionArea(gb);
   });
 
   return pool[0] ?? null;
@@ -127,11 +149,23 @@ export function attachBuildingSelection(
   layerInfo: BuildingLayerInfo,
   handlers: BuildingSelectionHandlers,
 ): () => void {
-  const layers = getBuildingQueryLayers(layerInfo).filter((id) => Boolean(map.getLayer(id)));
-
   const queryBuildings = (point: { x: number; y: number }): MapGeoJSONFeature[] => {
+    const layers = getAllBuildingQueryLayers(map, layerInfo);
     if (layers.length === 0) return [];
-    return map.queryRenderedFeatures([point.x, point.y], { layers });
+    // Screen pad: pitched 3D clicks need a little forgiveness.
+    const pad = 8;
+    try {
+      return map.queryRenderedFeatures(
+        [
+          [point.x - pad, point.y - pad],
+          [point.x + pad, point.y + pad],
+        ],
+        { layers },
+      );
+    } catch (error) {
+      console.warn("[omt-glb-poc] building pick query failed", error);
+      return [];
+    }
   };
 
   const onClick = (event: MapMouseEvent): void => {

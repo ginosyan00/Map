@@ -25,7 +25,12 @@ export type SelectedBuilding = {
   source: string;
   sourceLayer: string | undefined;
   properties: Record<string, unknown>;
+  /** Single polygon under the click (never a whole MultiPolygon cluster). */
   geometry: BuildingGeometry;
+  /** Original vector geometry before click-part extraction. */
+  sourceGeometry: BuildingGeometry;
+  /** Other MultiPolygon parts kept visible after hiding the parent feature. */
+  preservedSiblings: GeoJSON.Polygon[];
   clickLng: number;
   clickLat: number;
   centerLng: number;
@@ -66,8 +71,12 @@ export type CustomBuildingModel = {
   minZoom: number;
   visible: boolean;
 
-  /** Footprint used to hide the original extrusion (and for restore). */
+  /** Footprint under the click (single house part). */
   footprintGeometry: BuildingGeometry;
+  /** Full OSM/vector geometry (may be MultiPolygon / courtyard ring). */
+  sourceGeometry?: BuildingGeometry;
+  /** Sibling parts re-drawn after parent feature hide. */
+  preservedSiblings?: GeoJSON.Polygon[];
   /** Vector tile feature id when available. */
   vectorFeatureId?: string | number;
   vectorSourceLayer?: string;

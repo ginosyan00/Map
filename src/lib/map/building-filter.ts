@@ -11,8 +11,13 @@ import type {
   SelectedBuilding,
 } from "@/types/building";
 import type { BuildingLayerInfo } from "@/types/map";
-import { identitiesEqual } from "./building-identification";
-import { listAllBuildingExtrusionLayers } from "./building-layer";
+import {
+  extractSiblingPolygons,
+  footprintArea,
+  identitiesEqual,
+  pointInBuilding,
+} from "./building-identification";
+import { listAllBuildingExtrusionLayers, listAllBuildingHideLayers } from "./building-layer";
 import { devLog } from "./constants";
 import { syncReplacementGeoLayers } from "./replaced-cover";
 
@@ -22,15 +27,19 @@ export type HideTarget = {
   source: string;
   sourceLayer?: string;
   geometry: BuildingGeometry;
+  sourceGeometry?: BuildingGeometry;
   filterPropertyKey?: string;
   filterPropertyValue?: string | number;
+  /** Map placement used to re-resolve the live vector feature. */
+  lng?: number;
+  lat?: number;
 };
 
 const FALLBACK_HEIGHT: ExpressionSpecification = [
   "coalesce",
   ["get", "render_height"],
   ["get", "height"],
-  ["get", "building:levels"],
+  ["*", ["coalesce", ["get", "building:levels"], 3], 3],
   10,
 ];
 
@@ -40,9 +49,6 @@ const FALLBACK_BASE: ExpressionSpecification = [
   ["get", "min_height"],
   0,
 ];
-
-/** ~30 m pad so a large GLB does not leave neighboring wedges visible. */
-const FOOTPRINT_PAD_DEG = 0.00028;
 
 export function mergeExclusionFilter(
   original: FilterSpecification | null,
@@ -55,12 +61,14 @@ export function mergeExclusionFilter(
 export function ensureLiteralExtrusionOpacity(
   map: MapLibreMap,
   layerInfo: BuildingLayerInfo,
-  fallback = 0.9,
+  fallback = 1,
 ): void {
   if (!map.getLayer(layerInfo.layerId)) return;
-  const current = map.getPaintProperty(layerInfo.layerId, "fill-extrusion-opacity");
-  if (typeof current === "number") return;
-  map.setPaintProperty(layerInfo.layerId, "fill-extrusion-opacity", fallback);
+  try {
+    map.setPaintProperty(layerInfo.layerId, "fill-extrusion-opacity", fallback);
+  } catch {
+    /* ignore */
+  }
 }
 
 function coerceFeatureId(raw: string | number): string | number {
@@ -69,172 +77,13 @@ function coerceFeatureId(raw: string | number): string | number {
   return raw;
 }
 
-function geometryBbox(geometry: BuildingGeometry): [number, number, number, number] {
-  let minLng = Infinity;
-  let minLat = Infinity;
-  let maxLng = -Infinity;
-  let maxLat = -Infinity;
-
-  const visit = (coords: number[][]): void => {
-    for (const c of coords) {
-      const lng = c[0] ?? 0;
-      const lat = c[1] ?? 0;
-      minLng = Math.min(minLng, lng);
-      minLat = Math.min(minLat, lat);
-      maxLng = Math.max(maxLng, lng);
-      maxLat = Math.max(maxLat, lat);
-    }
-  };
-
-  if (geometry.type === "Polygon") {
-    for (const ring of geometry.coordinates) visit(ring);
-  } else {
-    for (const poly of geometry.coordinates) {
-      for (const ring of poly) visit(ring);
-    }
-  }
-
-  if (!Number.isFinite(minLng)) return [0, 0, 0, 0];
-  return [minLng, minLat, maxLng, maxLat];
-}
-
-function padBbox(
-  bbox: [number, number, number, number],
-  pad: number,
-): [number, number, number, number] {
-  return [bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad];
-}
-
-function bboxesOverlap(
-  a: [number, number, number, number],
-  b: [number, number, number, number],
-): boolean {
-  return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
-}
-
 function isBuildingGeometry(
   geometry: GeoJSON.Geometry | null | undefined,
 ): geometry is BuildingGeometry {
   return geometry?.type === "Polygon" || geometry?.type === "MultiPolygon";
 }
 
-/**
- * Find every rendered building that overlaps a replacement footprint (+ pad).
- * The selected feature-id alone often misses adjacent wedges under a large GLB.
- */
-export function expandHideTargetsFromMap(
-  map: MapLibreMap,
-  layerInfos: BuildingLayerInfo[],
-  targets: HideTarget[],
-): HideTarget[] {
-  if (targets.length === 0) return targets;
-
-  const layerIds = layerInfos
-    .map((l) => l.layerId)
-    .filter((id) => Boolean(map.getLayer(id)));
-  if (layerIds.length === 0) return targets;
-
-  const expanded: HideTarget[] = [...targets];
-  const seen = new Set<string>();
-  for (const t of targets) {
-    if (t.featureId !== undefined && t.featureId !== null) {
-      seen.add(String(coerceFeatureId(t.featureId)));
-    }
-  }
-
-  for (const target of targets) {
-    if (!target.geometry) continue;
-    const padded = padBbox(geometryBbox(target.geometry), FOOTPRINT_PAD_DEG);
-    const sw = map.project([padded[0], padded[1]]);
-    const ne = map.project([padded[2], padded[3]]);
-    const minX = Math.min(sw.x, ne.x);
-    const maxX = Math.max(sw.x, ne.x);
-    const minY = Math.min(sw.y, ne.y);
-    const maxY = Math.max(sw.y, ne.y);
-
-    let features: MapGeoJSONFeature[] = [];
-    try {
-      features = map.queryRenderedFeatures(
-        [
-          [minX, minY],
-          [maxX, maxY],
-        ],
-        { layers: layerIds },
-      );
-    } catch (error) {
-      console.warn("[omt-glb-poc] queryRenderedFeatures for hide failed", error);
-      continue;
-    }
-
-    const footprintBox = padded;
-    for (const feature of features) {
-      if (feature.id === undefined || feature.id === null) continue;
-      if (!isBuildingGeometry(feature.geometry)) continue;
-      if (!bboxesOverlap(geometryBbox(feature.geometry), footprintBox)) continue;
-
-      const id = coerceFeatureId(feature.id);
-      const key = String(id);
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      expanded.push({
-        identity: target.identity,
-        featureId: id,
-        source: feature.source,
-        sourceLayer: feature.sourceLayer,
-        geometry: feature.geometry,
-      });
-    }
-  }
-
-  devLog("Expanded hide targets", {
-    from: targets.length,
-    to: expanded.length,
-    ids: expanded.map((t) => t.featureId),
-  });
-  return expanded;
-}
-
-function collectFeatureIds(targets: HideTarget[]): Array<string | number> {
-  const ids: Array<string | number> = [];
-  const seen = new Set<string>();
-  for (const target of targets) {
-    if (target.featureId === undefined || target.featureId === null) continue;
-    const id = coerceFeatureId(target.featureId);
-    const key = String(id);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    ids.push(id);
-  }
-  return ids;
-}
-
-/** Both number + string forms — MapLibre id typing is inconsistent across tiles. */
-function idsForExpressions(ids: Array<string | number>): Array<string | number> {
-  const out: Array<string | number> = [];
-  const seen = new Set<string>();
-  for (const id of ids) {
-    const variants: Array<string | number> =
-      typeof id === "number" ? [id, String(id)] : [id, Number(id)];
-    for (const v of variants) {
-      if (typeof v === "number" && !Number.isFinite(v)) continue;
-      const key = `${typeof v}:${String(v)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(v);
-    }
-  }
-  return out;
-}
-
-function buildIdExclusionFilter(ids: Array<string | number>): FilterSpecification | null {
-  const literalIds = idsForExpressions(ids);
-  if (literalIds.length === 0) return null;
-  return ["!", ["in", ["id"], ["literal", literalIds]]] as FilterSpecification;
-}
-
 function cacheOriginalPaint(map: MapLibreMap, layerInfo: BuildingLayerInfo): void {
-  // Originals are captured once in building-layer.ts — do not re-read modified paint.
   if (layerInfo.originalHeight === undefined) {
     layerInfo.originalHeight = FALLBACK_HEIGHT;
   }
@@ -247,19 +96,207 @@ function cacheOriginalPaint(map: MapLibreMap, layerInfo: BuildingLayerInfo): voi
   }
 }
 
+function uniqueIds(values: Array<string | number | undefined | null>): Array<string | number> {
+  const out: Array<string | number> = [];
+  const seen = new Set<string>();
+  for (const raw of values) {
+    if (raw === undefined || raw === null) continue;
+    const id = coerceFeatureId(raw);
+    for (const variant of typeof id === "number" ? [id, String(id)] : [id, Number(id)]) {
+      if (typeof variant === "number" && !Number.isFinite(variant)) continue;
+      const key = `${typeof variant}:${String(variant)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(variant);
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolve the exact vector feature for each replacement.
+ * Never fall back to a nearby neighbor — that hid the wrong building and left
+ * the selected extrusion visible under the GLB ("model moves onto the old one").
+ */
+function resolveTargetsAgainstMap(
+  map: MapLibreMap,
+  targets: HideTarget[],
+  layerList: BuildingLayerInfo[],
+  replacements: CustomBuildingModel[],
+): HideTarget[] {
+  const layerIds = layerList.map((l) => l.layerId).filter((id) => Boolean(map.getLayer(id)));
+
+  return targets.map((target) => {
+    const replacement = replacements.find((r) =>
+      identitiesEqual(r.buildingIdentity, target.identity),
+    );
+
+    // Trusted id from the original click — do not replace with a neighbor guess.
+    const storedId = target.featureId ?? replacement?.vectorFeatureId;
+    if (storedId !== undefined && storedId !== null && String(storedId).length > 0) {
+      const trusted: HideTarget = {
+        ...target,
+        featureId: coerceFeatureId(storedId),
+        lng: target.lng ?? replacement?.longitude,
+        lat: target.lat ?? replacement?.latitude,
+      };
+      if (replacement) replacement.vectorFeatureId = trusted.featureId;
+      return trusted;
+    }
+
+    const lng = target.lng ?? replacement?.longitude;
+    const lat = target.lat ?? replacement?.latitude;
+    const footprint = target.geometry ?? replacement?.footprintGeometry;
+    const [footLng, footLat] = footprint
+      ? (() => {
+          // Inline centroid of footprint for matching.
+          if (footprint.type === "Polygon") {
+            const ring = footprint.coordinates[0] ?? [];
+            if (ring.length === 0) return [lng ?? 0, lat ?? 0] as [number, number];
+            let area = 0;
+            let cx = 0;
+            let cy = 0;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+              const [x0, y0] = ring[j] as [number, number];
+              const [x1, y1] = ring[i] as [number, number];
+              const f = x0 * y1 - x1 * y0;
+              area += f;
+              cx += (x0 + x1) * f;
+              cy += (y0 + y1) * f;
+            }
+            if (Math.abs(area) < 1e-12) return [lng ?? 0, lat ?? 0] as [number, number];
+            return [cx / (3 * area), cy / (3 * area)] as [number, number];
+          }
+          return [lng ?? 0, lat ?? 0] as [number, number];
+        })()
+      : ([lng ?? 0, lat ?? 0] as [number, number]);
+
+    const probeLng = Number.isFinite(footLng) ? footLng : lng;
+    const probeLat = Number.isFinite(footLat) ? footLat : lat;
+    if (
+      probeLng == null ||
+      probeLat == null ||
+      !Number.isFinite(probeLng) ||
+      !Number.isFinite(probeLat)
+    ) {
+      return target;
+    }
+
+    const matched = findFeatureContainingPoint(map, layerList, layerIds, probeLng, probeLat);
+    if (!matched || matched.id === undefined || matched.id === null) {
+      return target;
+    }
+
+    const next: HideTarget = {
+      ...target,
+      featureId: matched.id,
+      source: matched.source || target.source,
+      sourceLayer: matched.sourceLayer ?? target.sourceLayer,
+      lng: probeLng,
+      lat: probeLat,
+    };
+    if (replacement) replacement.vectorFeatureId = next.featureId;
+    return next;
+  });
+}
+
+function findFeatureContainingPoint(
+  map: MapLibreMap,
+  layerList: BuildingLayerInfo[],
+  layerIds: string[],
+  lng: number,
+  lat: number,
+): MapGeoJSONFeature | null {
+  // 1) Rendered features under the footprint center (must contain the point).
+  if (layerIds.length > 0) {
+    const point = map.project([lng, lat]);
+    const pad = 10;
+    try {
+      const rendered = map.queryRenderedFeatures(
+        [
+          [point.x - pad, point.y - pad],
+          [point.x + pad, point.y + pad],
+        ],
+        { layers: layerIds },
+      );
+      const hit = pickContainingFeature(rendered, lng, lat);
+      if (hit) return hit;
+    } catch {
+      /* continue */
+    }
+  }
+
+  // 2) Source features (works even if extrusion height already collapsed).
+  for (const layer of layerList) {
+    try {
+      const sourceFeatures = map.querySourceFeatures(layer.source, {
+        sourceLayer: layer.sourceLayer,
+      });
+      const asMapFeatures = sourceFeatures.map((f) => ({
+        ...f,
+        source: layer.source,
+        sourceLayer: layer.sourceLayer,
+      })) as MapGeoJSONFeature[];
+      const hit = pickContainingFeature(asMapFeatures, lng, lat);
+      if (hit) return hit;
+    } catch {
+      /* continue */
+    }
+  }
+
+  return null;
+}
+
+function pickContainingFeature(
+  features: MapGeoJSONFeature[],
+  lng: number,
+  lat: number,
+): MapGeoJSONFeature | null {
+  const containing = features.filter(
+    (f) =>
+      isBuildingGeometry(f.geometry) &&
+      pointInBuilding(lng, lat, f.geometry) &&
+      f.id !== undefined &&
+      f.id !== null,
+  );
+  if (containing.length === 0) return null;
+  containing.sort((a, b) => {
+    const ga = a.geometry;
+    const gb = b.geometry;
+    if (!isBuildingGeometry(ga) || !isBuildingGeometry(gb)) return 0;
+    return footprintArea(ga) - footprintArea(gb);
+  });
+  return containing[0] ?? null;
+}
+
+/**
+ * Simple MapLibre-safe match using native MVT feature ids only.
+ * OpenFreeMap buildings have feature ids but no osm_id property.
+ */
+function buildHideMatchExpression(targets: HideTarget[]): ExpressionSpecification | null {
+  const featureIds = uniqueIds(targets.map((t) => t.featureId));
+  if (featureIds.length === 0) return null;
+  return ["in", ["id"], ["literal", featureIds]] as ExpressionSpecification;
+}
+
+function collectStateIds(targets: HideTarget[]): Array<string | number> {
+  return uniqueIds(targets.map((t) => t.featureId));
+}
+
 function applyHideToLayer(
   map: MapLibreMap,
   layerInfo: BuildingLayerInfo,
-  ids: Array<string | number>,
+  targets: HideTarget[],
   previousIds: Array<string | number>,
 ): boolean {
   if (!map.getLayer(layerInfo.layerId)) return false;
 
   cacheOriginalPaint(map, layerInfo);
-  ensureLiteralExtrusionOpacity(map, layerInfo);
 
   const source = layerInfo.source;
   const sourceLayer = layerInfo.sourceLayer;
+  const ids = collectStateIds(targets);
+  const matchExpr = buildHideMatchExpression(targets);
 
   for (const id of previousIds) {
     try {
@@ -283,38 +320,45 @@ function applyHideToLayer(
     }
   }
 
-  const originalHeight = layerInfo.originalHeight ?? FALLBACK_HEIGHT;
-  const originalBase = layerInfo.originalBase ?? FALLBACK_BASE;
-  const literalIds = idsForExpressions(ids);
+  if (!matchExpr && ids.length === 0) {
+    map.setFilter(layerInfo.layerId, layerInfo.originalFilter ?? null);
+    return false;
+  }
 
-  const hidePredicate: ExpressionSpecification =
-    literalIds.length > 0
+  // 3D extrusion: collapse height as a belt-and-suspenders backup to filter.
+  if (layerInfo.type === "fill-extrusion") {
+    ensureLiteralExtrusionOpacity(map, layerInfo, 1);
+    const originalHeight = layerInfo.originalHeight ?? FALLBACK_HEIGHT;
+    const originalBase = layerInfo.originalBase ?? FALLBACK_BASE;
+    const hidePredicate: ExpressionSpecification = matchExpr
       ? ([
           "any",
           ["boolean", ["feature-state", "hidden"], false],
-          ["in", ["id"], ["literal", literalIds]],
+          matchExpr,
         ] as ExpressionSpecification)
       : (["boolean", ["feature-state", "hidden"], false] as ExpressionSpecification);
 
-  try {
-    map.setPaintProperty(layerInfo.layerId, "fill-extrusion-height", [
-      "case",
-      hidePredicate,
-      0,
-      originalHeight,
-    ] as ExpressionSpecification);
-    map.setPaintProperty(layerInfo.layerId, "fill-extrusion-base", [
-      "case",
-      hidePredicate,
-      0,
-      originalBase,
-    ] as ExpressionSpecification);
-  } catch (error) {
-    console.warn("[omt-glb-poc] height-hide paint failed", layerInfo.layerId, error);
+    try {
+      map.setPaintProperty(layerInfo.layerId, "fill-extrusion-height", [
+        "case",
+        hidePredicate,
+        0,
+        originalHeight,
+      ] as ExpressionSpecification);
+      map.setPaintProperty(layerInfo.layerId, "fill-extrusion-base", [
+        "case",
+        hidePredicate,
+        0,
+        originalBase,
+      ] as ExpressionSpecification);
+    } catch (error) {
+      console.warn("[omt-glb-poc] height-hide paint failed", layerInfo.layerId, error);
+    }
   }
 
-  const exclusion = buildIdExclusionFilter(ids);
-  if (exclusion) {
+  // Primary removal: filter the feature out (works for fill AND fill-extrusion).
+  if (matchExpr) {
+    const exclusion = ["!", matchExpr] as FilterSpecification;
     try {
       map.setFilter(
         layerInfo.layerId,
@@ -322,8 +366,25 @@ function applyHideToLayer(
       );
       return true;
     } catch (error) {
-      console.warn("[omt-glb-poc] id filter failed", layerInfo.layerId, error);
-      map.setFilter(layerInfo.layerId, layerInfo.originalFilter ?? null);
+      console.warn("[omt-glb-poc] hide filter failed", layerInfo.layerId, error);
+      if (ids.length > 0) {
+        try {
+          const idExclusion = [
+            "!",
+            ["in", ["id"], ["literal", ids]],
+          ] as FilterSpecification;
+          map.setFilter(
+            layerInfo.layerId,
+            mergeExclusionFilter(layerInfo.originalFilter ?? null, idExclusion),
+          );
+          return true;
+        } catch (fallbackError) {
+          console.warn("[omt-glb-poc] id hide filter failed", layerInfo.layerId, fallbackError);
+          map.setFilter(layerInfo.layerId, layerInfo.originalFilter ?? null);
+        }
+      } else {
+        map.setFilter(layerInfo.layerId, layerInfo.originalFilter ?? null);
+      }
     }
   }
 
@@ -344,11 +405,14 @@ function restoreLayer(map: MapLibreMap, layerInfo: BuildingLayerInfo, ids: Array
       /* ignore */
     }
   }
-  if (layerInfo.originalHeight !== undefined) {
-    map.setPaintProperty(layerInfo.layerId, "fill-extrusion-height", layerInfo.originalHeight);
-  }
-  if (layerInfo.originalBase !== undefined) {
-    map.setPaintProperty(layerInfo.layerId, "fill-extrusion-base", layerInfo.originalBase);
+  if (layerInfo.type === "fill-extrusion") {
+    if (layerInfo.originalHeight !== undefined) {
+      map.setPaintProperty(layerInfo.layerId, "fill-extrusion-height", layerInfo.originalHeight);
+    }
+    if (layerInfo.originalBase !== undefined) {
+      map.setPaintProperty(layerInfo.layerId, "fill-extrusion-base", layerInfo.originalBase);
+    }
+    ensureLiteralExtrusionOpacity(map, layerInfo, 1);
   }
   map.setFilter(layerInfo.layerId, layerInfo.originalFilter ?? null);
 }
@@ -360,15 +424,30 @@ export function hideTargetsFromReplacements(
   for (const r of replacements) {
     if (r.visible === false) continue;
     if (!r.footprintGeometry) continue;
-    targets.push({
+
+    const target: HideTarget = {
       identity: r.buildingIdentity,
       featureId: r.vectorFeatureId,
       source: r.buildingIdentity.source,
       sourceLayer: r.buildingIdentity.sourceLayer ?? r.vectorSourceLayer,
       geometry: r.footprintGeometry,
+      sourceGeometry: r.sourceGeometry,
       filterPropertyKey: r.filterPropertyKey,
       filterPropertyValue: r.filterPropertyValue,
-    });
+      lng: r.longitude,
+      lat: r.latitude,
+    };
+
+    if (target.filterPropertyKey == null || target.filterPropertyValue == null) {
+      if (r.buildingIdentity.type === "osm-id") {
+        target.filterPropertyKey = "osm_id";
+        target.filterPropertyValue = coerceFeatureId(r.buildingIdentity.value);
+      } else if (r.buildingIdentity.type === "feature-id") {
+        target.featureId = target.featureId ?? coerceFeatureId(r.buildingIdentity.value);
+      }
+    }
+
+    targets.push(target);
   }
   return targets;
 }
@@ -385,21 +464,19 @@ export function hideTargetsFromSelection(
       source: b.source,
       sourceLayer: b.sourceLayer,
       geometry: b.geometry,
+      sourceGeometry: b.sourceGeometry,
       filterPropertyKey: b.filterPropertyKey,
       filterPropertyValue: b.filterPropertyValue,
+      lng: b.centerLng,
+      lat: b.centerLat,
     }));
 }
 
 export type ApplyHiddenOptions = {
-  /** Do not queryRenderedFeatures to expand hide set (prevents flicker while panning). */
   skipExpand?: boolean;
-  /** If hide id set unchanged, only refresh feature-state — skip filter/paint rewrite. */
   skipIfUnchanged?: boolean;
 };
 
-/**
- * Hide original extrusions under replacements across every building fill-extrusion layer.
- */
 export function applyHiddenBuildings(
   map: MapLibreMap,
   layerInfo: BuildingLayerInfo,
@@ -414,8 +491,9 @@ export function applyHiddenBuildings(
 
   syncReplacementGeoLayers(map, replacements);
 
-  const layers = listAllBuildingExtrusionLayers(map);
-  const layerList = layers.length > 0 ? layers : [layerInfo];
+  const hideLayers = listAllBuildingHideLayers(map);
+  const extrusionLayers = listAllBuildingExtrusionLayers(map);
+  const layerList = hideLayers.length > 0 ? hideLayers : extrusionLayers.length > 0 ? extrusionLayers : [layerInfo];
 
   if (targets.length === 0 && replacements.length === 0) {
     for (const layer of layerList) {
@@ -424,17 +502,21 @@ export function applyHiddenBuildings(
     return { applied: true, warning: null, hiddenIds: [] };
   }
 
-  const expanded = options.skipExpand
-    ? targets
-    : expandHideTargetsFromMap(map, layerList, targets);
-  const ids = collectFeatureIds(expanded);
+  // Resolve against all building layers (2D fill + 3D extrusion).
+  const pickLayers = layerList;
+  enrichPreservedSiblings(map, replacements, extrusionLayers.length > 0 ? extrusionLayers : pickLayers);
+  const resolved = resolveTargetsAgainstMap(map, targets, pickLayers, replacements);
+  syncReplacementGeoLayers(map, replacements);
+
+  void options.skipExpand;
+  const ids = collectStateIds(resolved);
+  const matchExpr = buildHideMatchExpression(resolved);
 
   const sameIds =
     ids.length === previousHiddenIds.length &&
     ids.every((id) => previousHiddenIds.some((p) => String(p) === String(id)));
 
   if (options.skipIfUnchanged && sameIds && ids.length > 0) {
-    // Tile reload: refresh feature-state only — do not rewrite paint/filter (flicker).
     for (const layer of layerList) {
       refreshFeatureStateOnly(map, layer, ids);
     }
@@ -443,7 +525,7 @@ export function applyHiddenBuildings(
 
   let anyApplied = false;
   for (const layer of layerList) {
-    if (applyHideToLayer(map, layer, ids, previousHiddenIds)) {
+    if (applyHideToLayer(map, layer, resolved, previousHiddenIds)) {
       anyApplied = true;
     }
   }
@@ -454,12 +536,25 @@ export function applyHiddenBuildings(
     layerInfo.originalFilter = layerList[0].originalFilter ?? layerInfo.originalFilter;
   }
 
+  const warning =
+    !anyApplied || (!matchExpr && ids.length === 0)
+      ? "Could not hide original extrusion (feature not found in tiles). Try re-selecting the building."
+      : null;
+
+  devLog("Hidden buildings", {
+    resolved: resolved.map((t) => ({
+      id: t.featureId,
+      osm: t.filterPropertyValue,
+      key: t.filterPropertyKey,
+    })),
+    ids,
+    anyApplied,
+  });
+
   return {
-    applied: true,
+    applied: anyApplied,
     hiddenIds: ids,
-    warning: anyApplied
-      ? null
-      : "Could not hide original extrusion (missing feature ids). Your GLB still loads.",
+    warning,
   };
 }
 
@@ -482,18 +577,81 @@ function refreshFeatureStateOnly(
   }
 }
 
+function enrichPreservedSiblings(
+  map: MapLibreMap,
+  replacements: CustomBuildingModel[],
+  layerList: BuildingLayerInfo[],
+): void {
+  for (const replacement of replacements) {
+    if (replacement.preservedSiblings && replacement.preservedSiblings.length > 0) continue;
+    if (!replacement.footprintGeometry || replacement.footprintGeometry.type !== "Polygon") {
+      continue;
+    }
+
+    const layer = layerList[0];
+    if (!layer) continue;
+
+    let features: ReturnType<MapLibreMap["querySourceFeatures"]> = [];
+    try {
+      features = map.querySourceFeatures(layer.source, {
+        sourceLayer: layer.sourceLayer,
+      });
+    } catch {
+      continue;
+    }
+
+    const key = replacement.filterPropertyKey;
+    const value = replacement.filterPropertyValue;
+    const featureId = replacement.vectorFeatureId;
+
+    for (const feature of features) {
+      if (!feature.geometry || feature.geometry.type !== "MultiPolygon") continue;
+
+      let matches = false;
+      if (key != null && value != null && feature.properties) {
+        matches = String(feature.properties[key]) === String(value);
+      }
+      if (!matches && featureId != null && feature.id != null) {
+        matches = String(feature.id) === String(featureId);
+      }
+      if (!matches) continue;
+
+      const siblings = extractSiblingPolygons(
+        feature.geometry as BuildingGeometry,
+        replacement.footprintGeometry,
+      );
+      if (siblings.length > 0) {
+        replacement.preservedSiblings = siblings;
+        replacement.sourceGeometry = feature.geometry as BuildingGeometry;
+      }
+      break;
+    }
+  }
+}
+
 export function restoreOriginalBuildingFilter(
   map: MapLibreMap,
   layerInfo: BuildingLayerInfo,
   previousHiddenIds: Array<string | number> = [],
 ): void {
   if (!map.isStyleLoaded()) return;
-  const layers = listAllBuildingExtrusionLayers(map);
-  const layerList = layers.length > 0 ? layers : [layerInfo];
+  const hideLayers = listAllBuildingHideLayers(map);
+  const extrusionLayers = listAllBuildingExtrusionLayers(map);
+  const layerList =
+    hideLayers.length > 0 ? hideLayers : extrusionLayers.length > 0 ? extrusionLayers : [layerInfo];
   for (const layer of layerList) {
     restoreLayer(map, layer, previousHiddenIds);
   }
   syncReplacementGeoLayers(map, []);
+}
+
+/** @deprecated */
+export function expandHideTargetsFromMap(
+  _map: MapLibreMap,
+  _layerInfos: BuildingLayerInfo[],
+  targets: HideTarget[],
+): HideTarget[] {
+  return targets;
 }
 
 /** @deprecated */
@@ -504,6 +662,6 @@ export function applyHiddenBuildingsFilter(
   identityList: BuildingIdentity[],
 ): { applied: boolean; warning?: string } {
   const targets = hideTargetsFromSelection(buildings, identityList);
-  const result = applyHiddenBuildings(map, layerInfo, targets, []);
+  const result = applyHiddenBuildings(map, layerInfo, targets, [], [], { skipExpand: true });
   return { applied: result.applied, warning: result.warning ?? undefined };
 }

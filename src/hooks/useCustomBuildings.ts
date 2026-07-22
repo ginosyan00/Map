@@ -103,6 +103,7 @@ export function useCustomBuildings() {
         buildingIdentity: building.identity,
         modelUrl: resolvedUrl,
         modelLabel: label,
+        // Keep the selected footprint center — never drift toward a neighbor.
         longitude: building.centerLng,
         latitude: building.centerLat,
         altitude,
@@ -113,7 +114,9 @@ export function useCustomBuildings() {
         minZoom: existing?.minZoom ?? DEFAULT_MODEL_MIN_ZOOM,
         visible: true,
         footprintGeometry: building.geometry,
-        vectorFeatureId: building.featureId,
+        sourceGeometry: building.sourceGeometry,
+        preservedSiblings: building.preservedSiblings,
+        vectorFeatureId: building.featureId ?? existing?.vectorFeatureId,
         vectorSourceLayer: building.sourceLayer,
         filterPropertyKey: building.filterPropertyKey,
         filterPropertyValue: building.filterPropertyValue,

@@ -1,6 +1,6 @@
 import type { Map as MapLibreMap, RasterDEMSourceSpecification } from "maplibre-gl";
 
-export const TERRAIN_SOURCE_ID = "f4-terrain-dem";
+export const TERRAIN_SOURCE_ID = "terrain-dem";
 
 /**
  * Mapterhorn Terrarium DEM (used in MapLibre sky/fog/terrain example).

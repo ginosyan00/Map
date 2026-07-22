@@ -12,6 +12,7 @@ export type GraphicOptions = {
   showBuildings: boolean;
   showSky: boolean;
   idleOrbit: boolean;
+  showVehicles: boolean;
 };
 
 const DEFAULT_OPTIONS: GraphicOptions = {
@@ -23,6 +24,7 @@ const DEFAULT_OPTIONS: GraphicOptions = {
   showBuildings: true,
   showSky: true,
   idleOrbit: false,
+  showVehicles: true,
 };
 
 export function useGraphicOptions() {

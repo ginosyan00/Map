@@ -11,7 +11,7 @@ export function MapControls({ statusText, onResetView }: Props) {
       <div className="hint">Click a building to select it</div>
       <div className="map-status">{statusText}</div>
       <button type="button" className="btn tiny" onClick={onResetView}>
-        F4 view
+        Reset view
       </button>
     </div>
   );

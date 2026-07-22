@@ -77,6 +77,59 @@ export function buildingBaseWithZoomGrow(
   ];
 }
 
+/**
+ * Collapse a paint value to 0 when `hidePredicate` is true.
+ * MapLibre requires `["zoom"]` to stay the input of a top-level interpolate/step,
+ * so zoom curves get the case injected into each stop output instead of wrapped.
+ */
+export function collapseExtrusionWhenHidden(
+  value: ExpressionSpecification | number,
+  hidePredicate: ExpressionSpecification,
+): ExpressionSpecification {
+  if (typeof value === "number") {
+    return ["case", hidePredicate, 0, value];
+  }
+
+  const op = value[0];
+  if (
+    (op === "interpolate" || op === "interpolate-hcl" || op === "interpolate-lab") &&
+    isZoomInput(value[2])
+  ) {
+    // ["interpolate", interp, ["zoom"], stop, out, stop, out, ...]
+    const next: unknown[] = value.slice();
+    for (let i = 4; i < next.length; i += 2) {
+      next[i] = ["case", hidePredicate, 0, next[i]];
+    }
+    return next as ExpressionSpecification;
+  }
+
+  if (op === "step" && isZoomInput(value[1])) {
+    // ["step", ["zoom"], defaultOut, stop, out, ...]
+    const next: unknown[] = value.slice();
+    next[2] = ["case", hidePredicate, 0, next[2]];
+    for (let i = 4; i < next.length; i += 2) {
+      next[i] = ["case", hidePredicate, 0, next[i]];
+    }
+    return next as ExpressionSpecification;
+  }
+
+  if (op === "let") {
+    const next: unknown[] = value.slice();
+    const last = next.length - 1;
+    next[last] = collapseExtrusionWhenHidden(
+      next[last] as ExpressionSpecification | number,
+      hidePredicate,
+    );
+    return next as ExpressionSpecification;
+  }
+
+  return ["case", hidePredicate, 0, value];
+}
+
+function isZoomInput(input: unknown): boolean {
+  return Array.isArray(input) && input[0] === "zoom";
+}
+
 /** Darken or lighten a #rrggbb color by factor (−1…1). */
 function shadeHex(hex: string, amount: number): string {
   const raw = hex.replace("#", "");

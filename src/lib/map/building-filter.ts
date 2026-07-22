@@ -18,6 +18,7 @@ import {
   pointInBuilding,
 } from "./building-identification";
 import { listAllBuildingExtrusionLayers, listAllBuildingHideLayers } from "./building-layer";
+import { collapseExtrusionWhenHidden } from "./building-paint";
 import { devLog } from "./constants";
 import { syncReplacementGeoLayers } from "./replaced-cover";
 
@@ -339,18 +340,16 @@ function applyHideToLayer(
       : (["boolean", ["feature-state", "hidden"], false] as ExpressionSpecification);
 
     try {
-      map.setPaintProperty(layerInfo.layerId, "fill-extrusion-height", [
-        "case",
-        hidePredicate,
-        0,
-        originalHeight,
-      ] as ExpressionSpecification);
-      map.setPaintProperty(layerInfo.layerId, "fill-extrusion-base", [
-        "case",
-        hidePredicate,
-        0,
-        originalBase,
-      ] as ExpressionSpecification);
+      map.setPaintProperty(
+        layerInfo.layerId,
+        "fill-extrusion-height",
+        collapseExtrusionWhenHidden(originalHeight, hidePredicate),
+      );
+      map.setPaintProperty(
+        layerInfo.layerId,
+        "fill-extrusion-base",
+        collapseExtrusionWhenHidden(originalBase, hidePredicate),
+      );
     } catch (error) {
       console.warn("[omt-glb-poc] height-hide paint failed", layerInfo.layerId, error);
     }

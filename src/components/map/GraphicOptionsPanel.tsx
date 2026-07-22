@@ -156,6 +156,14 @@ export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
         <label className="graphic-toggle">
           <input
             type="checkbox"
+            checked={options.showVegetation}
+            onChange={(e) => onChange({ showVegetation: e.target.checked })}
+          />
+          Park trees (3D)
+        </label>
+        <label className="graphic-toggle">
+          <input
+            type="checkbox"
             checked={options.idleOrbit}
             onChange={(e) => onChange({ idleOrbit: e.target.checked })}
           />

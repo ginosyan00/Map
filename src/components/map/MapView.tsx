@@ -21,7 +21,7 @@ import {
   getMapEnvConfig,
 } from "@/lib/map/map-style";
 import { identityKey } from "@/lib/map/building-identification";
-import { CUSTOM_LAYER_ID, SAMPLE_MODEL_URL } from "@/lib/map/constants";
+import { CUSTOM_LAYER_ID, SAMPLE_MODEL_URL, isDev } from "@/lib/map/constants";
 import { resolveDurableModelUrl } from "@/lib/three/load-glb-model";
 import {
   applyAtmosphere,
@@ -52,6 +52,11 @@ import {
   attachVehicleTraffic,
   type VehicleTrafficHandle,
 } from "./VehicleTrafficLayer";
+import {
+  attachVegetation,
+  type VegetationHandle,
+} from "./vegetation/attachVegetation";
+import { TreeDebugPanel } from "./vegetation/TreeDebugPanel";
 
 type OrbitHandle = ReturnType<typeof createIdleOrbit>;
 
@@ -83,6 +88,7 @@ export function MapView(props: Props) {
   const previousHiddenIdsRef = useRef<Array<string | number>>([]);
   const orbitRef = useRef<OrbitHandle | null>(null);
   const vehiclesRef = useRef<VehicleTrafficHandle | null>(null);
+  const vegetationRef = useRef<VegetationHandle | null>(null);
   const propsRef = useRef(props);
   const hideSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastHideKeyRef = useRef<string>("");
@@ -244,6 +250,9 @@ export function MapView(props: Props) {
 
         map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-left");
         mapRef.current = map;
+        if (isDev()) {
+          (window as Window & { __omtMap?: MapLibreMap }).__omtMap = map;
+        }
 
         let detachSelection: (() => void) | undefined;
         let unsubscribeStatus: (() => void) | undefined;
@@ -276,6 +285,10 @@ export function MapView(props: Props) {
             const vehicles = attachVehicleTraffic(map);
             vehiclesRef.current = vehicles;
             vehicles.setEnabled(propsRef.current.graphicOptions.showVehicles);
+
+            const vegetation = attachVegetation(map);
+            vegetationRef.current = vegetation;
+            vegetation.setEnabled(propsRef.current.graphicOptions.showVegetation);
 
             detachSelection = attachBuildingSelection(map, info, {
               onSelect: (building) => {
@@ -342,6 +355,8 @@ export function MapView(props: Props) {
           orbitRef.current = null;
           vehiclesRef.current?.destroy();
           vehiclesRef.current = null;
+          vegetationRef.current?.destroy();
+          vegetationRef.current = null;
           if (hideSyncTimerRef.current) clearTimeout(hideSyncTimerRef.current);
           if (onSourceData) map.off("sourcedata", onSourceData);
           setMapReady(false);
@@ -439,6 +454,7 @@ export function MapView(props: Props) {
     );
     orbitRef.current?.setEnabled(props.graphicOptions.idleOrbit);
     vehiclesRef.current?.setEnabled(props.graphicOptions.showVehicles);
+    vegetationRef.current?.setEnabled(props.graphicOptions.showVegetation);
     if (replacementsRef.current.length > 0) {
       syncHiddenBuildings({ force: true });
     }
@@ -466,6 +482,38 @@ export function MapView(props: Props) {
       />
       <WeatherOverlay weather={props.graphicOptions.weather} />
       <MapControls statusText={statusText} onResetView={resetView} />
+      {mapReady ? (
+        <TreeDebugPanel
+          getDebug={() =>
+            vegetationRef.current?.getDebug() ?? {
+              parkLayer: null,
+              parkFeatureId: null,
+              parkCount: 0,
+              polygonAreaM2: 0,
+              requestedDensity: 95,
+              generatedTreeCount: 0,
+              rejectedPointCount: 0,
+              speciesCounts: { deciduous: 0, compact: 0, conifer: 0 },
+              currentLod: "hidden",
+              currentZoom: 0,
+              drawCalls: 0,
+              triangleEstimate: 0,
+              modelLoading: "idle",
+              windEnabled: false,
+              shadowsEnabled: false,
+              quality: "medium",
+              enabled: props.graphicOptions.showVegetation,
+            }
+          }
+          onRegenerate={() => vegetationRef.current?.regenerate()}
+          onToggle={(enabled) => {
+            vegetationRef.current?.setEnabled(enabled);
+          }}
+          onDensity={(densityPerHectare) =>
+            vegetationRef.current?.setConfigPatch({ densityPerHectare })
+          }
+        />
+      ) : null}
     </div>
   );
 }

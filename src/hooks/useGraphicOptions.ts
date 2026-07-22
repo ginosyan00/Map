@@ -13,6 +13,7 @@ export type GraphicOptions = {
   showSky: boolean;
   idleOrbit: boolean;
   showVehicles: boolean;
+  showVegetation: boolean;
 };
 
 const DEFAULT_OPTIONS: GraphicOptions = {
@@ -25,6 +26,7 @@ const DEFAULT_OPTIONS: GraphicOptions = {
   showSky: true,
   idleOrbit: false,
   showVehicles: true,
+  showVegetation: true,
 };
 
 export function useGraphicOptions() {

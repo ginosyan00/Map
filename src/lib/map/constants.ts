@@ -38,6 +38,9 @@ export const VEHICLE_3D_LAYER_ID = "traffic-vehicles-three";
 /** 3D cars render at every zoom; mesh scale follows mercator meters. */
 export const VEHICLE_MIN_ZOOM = 0;
 
+/** Park vegetation custom layer (Three.js InstancedMesh). */
+export const VEGETATION_LAYER_ID = "threejs-vegetation-layer";
+
 export const STORAGE_KEY = "omt-glb-poc:custom-buildings:v1";
 
 export const MAX_GLB_BYTES = Number(

@@ -1,11 +1,24 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 
-/** Default camera: Yerevan downtown, pitched 3D view. */
+function envNumber(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Default camera from NEXT_PUBLIC_MAP_* (see .env).
+ * Fallback matches F4map demo: https://demo.f4map.com/#lat=40.2072833&lon=44.5189334&zoom=18&camera.phi=-17.59
+ */
 export const DEFAULT_VIEW = {
-  center: [44.5236047, 40.2119757] as [number, number],
-  zoom: 17,
-  pitch: 69,
-  bearing: 38,
+  center: [
+    envNumber("NEXT_PUBLIC_MAP_CENTER_LNG", 44.5189334),
+    envNumber("NEXT_PUBLIC_MAP_CENTER_LAT", 40.2072833),
+  ] as [number, number],
+  zoom: envNumber("NEXT_PUBLIC_MAP_INITIAL_ZOOM", 18),
+  pitch: envNumber("NEXT_PUBLIC_MAP_INITIAL_PITCH", 62),
+  bearing: envNumber("NEXT_PUBLIC_MAP_INITIAL_BEARING", -17.59),
 };
 
 export type CinematicFlyOptions = {

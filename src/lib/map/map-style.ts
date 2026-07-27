@@ -13,19 +13,14 @@ export type MapEnvConfig = {
 export function getMapEnvConfig(): MapEnvConfig {
   const styleUrl = process.env.NEXT_PUBLIC_MAP_STYLE_URL?.trim() || null;
   const tilesUrl = process.env.NEXT_PUBLIC_MAPTILES_URL?.trim() || null;
-  const lng = Number(process.env.NEXT_PUBLIC_MAP_CENTER_LNG ?? DEFAULT_VIEW.center[0]);
-  const lat = Number(process.env.NEXT_PUBLIC_MAP_CENTER_LAT ?? DEFAULT_VIEW.center[1]);
-  const zoom = Number(process.env.NEXT_PUBLIC_MAP_INITIAL_ZOOM ?? DEFAULT_VIEW.zoom);
-  const pitch = Number(process.env.NEXT_PUBLIC_MAP_INITIAL_PITCH ?? DEFAULT_VIEW.pitch);
-  const bearing = Number(process.env.NEXT_PUBLIC_MAP_INITIAL_BEARING ?? DEFAULT_VIEW.bearing);
 
   return {
     styleUrl,
     tilesUrl,
-    center: [lng, lat],
-    zoom: Number.isFinite(zoom) ? zoom : DEFAULT_VIEW.zoom,
-    pitch: Number.isFinite(pitch) ? pitch : DEFAULT_VIEW.pitch,
-    bearing: Number.isFinite(bearing) ? bearing : DEFAULT_VIEW.bearing,
+    center: DEFAULT_VIEW.center,
+    zoom: DEFAULT_VIEW.zoom,
+    pitch: DEFAULT_VIEW.pitch,
+    bearing: DEFAULT_VIEW.bearing,
   };
 }
 
@@ -110,4 +105,4 @@ export function applyBuildingPromoteId(style: StyleSpecification): StyleSpecific
 }
 
 export const FALLBACK_STYLE_HINT =
-  "Set NEXT_PUBLIC_MAP_STYLE_URL in .env.local (e.g. https://tiles.openfreemap.org/styles/liberty).";
+  "Set NEXT_PUBLIC_MAP_STYLE_URL in .env (e.g. https://tiles.openfreemap.org/styles/liberty).";

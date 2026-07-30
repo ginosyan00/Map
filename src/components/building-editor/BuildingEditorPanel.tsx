@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import type { CustomBuildingModel, SelectedBuilding } from "@/types/building";
 import type { MapDebugSnapshot } from "@/types/map";
 import type { CustomLayerStatus } from "@/components/map/CustomBuildingLayer";
@@ -8,6 +7,7 @@ import { SelectedBuildingInfo } from "./SelectedBuildingInfo";
 import { ModelUploader } from "./ModelUploader";
 import { TransformControls } from "./TransformControls";
 import { ManageIntegratePanel } from "./ManageIntegratePanel";
+import { SavedReplacementsList } from "./SavedReplacementsList";
 import type { CameraShareState } from "@/lib/integration/share-url";
 
 type Props = {
@@ -38,6 +38,12 @@ type Props = {
   onImportFile: (file: File) => void;
   camera: CameraShareState | null;
   onClearAll: () => void;
+  pendingDeleteIds: string[];
+  isDirty: boolean;
+  saving: boolean;
+  onSaveDraft: () => void;
+  onDiscardDraft: () => void;
+  onUndeleteReplacement: (id: string) => void;
 };
 
 export function BuildingEditorPanel(props: Props) {
@@ -50,7 +56,6 @@ export function BuildingEditorPanel(props: Props) {
     layerStatus,
   } = props;
 
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const layerErrors = layerStatus ? Object.values(layerStatus.errors) : [];
   const step = selected ? (props.modelStatus === "success" || activeReplacement ? 3 : 2) : 1;
   const canReplace = Boolean(selected) && props.modelStatus === "success";
@@ -134,7 +139,7 @@ export function BuildingEditorPanel(props: Props) {
           </button>
         </div>
         {activeReplacement ? (
-          <p className="ok compact">Replacement active on the map.</p>
+          <p className="ok compact">Replacement active on the map — Save to keep.</p>
         ) : null}
       </section>
 
@@ -154,83 +159,22 @@ export function BuildingEditorPanel(props: Props) {
         )}
       </section>
 
-      <section className="section">
-        <div className="section-head">
-          <h3>Saved</h3>
-          <span className="tag">{replacements.length}</span>
-        </div>
-        {replacements.length === 0 ? (
-          <p className="muted empty-hint">No replacements yet.</p>
-        ) : (
-          <ul className="list">
-            {replacements.map((item) => (
-              <li key={item.id} className={item.id === activeReplacement?.id ? "active" : ""}>
-                <button
-                  type="button"
-                  className="list-main clickable"
-                  onClick={() => props.onFocusReplacement(item.id)}
-                >
-                  <strong>{item.modelLabel ?? "Custom GLB"}</strong>
-                  <span className="muted small">
-                    {item.longitude.toFixed(4)}, {item.latitude.toFixed(4)}
-                  </span>
-                </button>
-                <div className="row wrap">
-                  <button
-                    type="button"
-                    className="btn tiny"
-                    onClick={() => props.onSelectReplacement(item.id)}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="btn tiny"
-                    onClick={() => props.onToggleReplacementVisible(item.id, !item.visible)}
-                  >
-                    {item.visible ? "Hide" : "Show"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn tiny danger"
-                    onClick={() => props.onDeleteReplacement(item.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <button
-          type="button"
-          className="btn ghost tiny advanced-toggle"
-          onClick={() => setAdvancedOpen((v) => !v)}
-        >
-          {advancedOpen ? "Hide import / export" : "Import / export"}
-        </button>
-        {advancedOpen ? (
-          <div className="row wrap" style={{ marginTop: 8 }}>
-            <button type="button" className="btn" onClick={props.onExport}>
-              Export JSON
-            </button>
-            <label className="btn">
-              Import JSON
-              <input
-                type="file"
-                accept="application/json,.json"
-                hidden
-                onChange={async (event) => {
-                  const file = event.target.files?.[0];
-                  if (file) props.onImportFile(file);
-                  event.target.value = "";
-                }}
-              />
-            </label>
-          </div>
-        ) : null}
-      </section>
+      <SavedReplacementsList
+        replacements={replacements}
+        activeId={activeReplacement?.id ?? null}
+        pendingDeleteIds={props.pendingDeleteIds}
+        isDirty={props.isDirty}
+        saving={props.saving}
+        onFocus={props.onFocusReplacement}
+        onEdit={props.onSelectReplacement}
+        onToggleVisible={props.onToggleReplacementVisible}
+        onDelete={props.onDeleteReplacement}
+        onUndelete={props.onUndeleteReplacement}
+        onSave={props.onSaveDraft}
+        onDiscard={props.onDiscardDraft}
+        onExport={props.onExport}
+        onImportFile={props.onImportFile}
+      />
 
       <ManageIntegratePanel
         camera={props.camera}

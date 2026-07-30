@@ -72,7 +72,7 @@ export function HomeClient() {
 
   useEffect(() => {
     if (!buildings.hydrated || focusApplied || !share.focusId) return;
-    const item = buildings.store.replacements.find((r) => r.id === share.focusId);
+    const item = buildings.draftReplacements.find((r) => r.id === share.focusId);
     if (!item) {
       setFocusApplied(true);
       return;
@@ -85,7 +85,7 @@ export function HomeClient() {
   const onMapSelect = useCallback(
     (building: SelectedBuilding) => {
       selectBuilding(building);
-      const match = buildings.store.replacements.find(
+      const match = buildings.draftReplacements.find(
         (r) => identityKey(r.buildingIdentity) === identityKey(building.identity),
       );
       buildings.selectReplacement(match?.id ?? null);
@@ -185,7 +185,7 @@ export function HomeClient() {
 
   const onRemoveActive = useCallback(() => {
     if (buildings.activeReplacement) {
-      buildings.removeReplacement(buildings.activeReplacement.id);
+      buildings.markDeleteReplacement(buildings.activeReplacement.id);
     }
   }, [buildings]);
 
@@ -241,7 +241,7 @@ export function HomeClient() {
           <BuildingEditorPanel
             selected={selected}
             activeReplacement={buildings.activeReplacement}
-            replacements={buildings.store.replacements}
+            replacements={buildings.draftReplacements}
             modelStatus={modelLoader.state}
             modelError={modelLoader.error}
             modelLabel={modelLoader.source?.label ?? pendingModelUrl}
@@ -251,6 +251,9 @@ export function HomeClient() {
             debug={debug}
             layerStatus={layerStatus}
             camera={camera}
+            pendingDeleteIds={buildings.pendingDeleteIds}
+            isDirty={buildings.isDirty}
+            saving={buildings.saving}
             onToggleDebug={() => setDebugOpen((v) => !v)}
             onUseSample={onUseSample}
             onUpload={onUpload}
@@ -260,19 +263,26 @@ export function HomeClient() {
             onResetTransform={buildings.resetActiveTransform}
             onTransformChange={buildings.updateActiveTransform}
             onSelectReplacement={buildings.selectReplacement}
-            onDeleteReplacement={buildings.removeReplacement}
+            onDeleteReplacement={buildings.markDeleteReplacement}
+            onUndeleteReplacement={buildings.unmarkDeleteReplacement}
             onToggleReplacementVisible={(id, visible) => {
               buildings.patchReplacement(id, { visible });
             }}
             onFocusReplacement={(id) => {
-              const item = buildings.store.replacements.find((r) => r.id === id);
-              if (!item) return;
+              const item = buildings.draftReplacements.find((r) => r.id === id);
+              if (!item || buildings.pendingDeleteIds.includes(id)) return;
               buildings.selectReplacement(id);
               setFocusTarget({ lng: item.longitude, lat: item.latitude });
             }}
             onExport={buildings.exportJson}
             onImportFile={onImportFile}
             onClearAll={buildings.clearAllReplacements}
+            onSaveDraft={() => {
+              void buildings.saveDraft().catch(() => {
+                /* storageError already set */
+              });
+            }}
+            onDiscardDraft={buildings.discardDraft}
           />
         ) : null}
       </div>

@@ -16,7 +16,6 @@ import {
   DEFAULT_MODEL_SCALE,
   DEFAULT_APPLY_MODEL_URL,
 } from "@/lib/map/constants";
-import { identityKey } from "@/lib/map/building-identification";
 import { useReplacementPersist } from "@/hooks/useReplacementPersist";
 import {
   downloadJson,
@@ -27,63 +26,62 @@ import {
   validateConfigExport,
 } from "@/lib/storage/custom-buildings-storage";
 import {
-  modelLabelFromUrl,
   sanitizeLoadedReplacements,
   staleBlobWarning,
 } from "@/lib/storage/replacement-sanitize";
 import {
+  buildReplacementModel,
+  findByIdentity,
+  replacementsEqual,
+} from "@/lib/storage/replacement-model";
+import {
   fetchReplacementsFromApi,
   saveReplacementsToApi,
 } from "@/lib/storage/replacements-api";
-import { resolveDurableModelUrl } from "@/lib/three/load-glb-model";
-
-function createId(): string {
-  return `custom-building-${crypto.randomUUID()}`;
-}
 
 export function useCustomBuildings() {
-  const [store, setStore] = useState<CustomBuildingStore>({
-    version: 1,
-    selectedBuildingId: null,
-    replacements: [],
-  });
+  const [committed, setCommitted] = useState<CustomBuildingModel[]>([]);
+  const [draft, setDraft] = useState<CustomBuildingModel[]>([]);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
-  const storeRef = useRef(store);
-  storeRef.current = store;
+  const [saving, setSaving] = useState(false);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   const onRewritten = useCallback((replacements: CustomBuildingModel[]) => {
-    setStore((prev) => ({ ...prev, replacements }));
+    setCommitted(replacements);
+    setDraft(replacements);
+    setPendingDeleteIds([]);
   }, []);
 
-  const { schedulePersist, skipNextPersistRef } = useReplacementPersist(
+  const { persistNow, skipNextPersistRef } = useReplacementPersist(
     setStorageError,
     onRewritten,
   );
 
   useEffect(() => {
     let cancelled = false;
-
     void (async () => {
       try {
         const fromDb = await fetchReplacementsFromApi();
         if (cancelled) return;
-
         if (fromDb.length > 0) {
           const { replacements, staleBlobCount } = sanitizeLoadedReplacements(fromDb);
-          setStore({ version: 1, selectedBuildingId: null, replacements });
+          setCommitted(replacements);
+          setDraft(replacements);
           markMigratedLocalToDb();
           setStorageError(staleBlobWarning(staleBlobCount));
         } else {
           const localResult = loadAndSanitizeStoreFromLocalStorage();
           if (localResult.store.replacements.length > 0) {
-            // Remigrate whenever DB is empty but local still has data
-            // (covers wiped DB + stale migratedOnce flag).
             const saved = await saveReplacementsToApi(localResult.store.replacements);
             if (cancelled) return;
             markMigratedLocalToDb();
             const { replacements, staleBlobCount } = sanitizeLoadedReplacements(saved);
-            setStore({ version: 1, selectedBuildingId: null, replacements });
+            setCommitted(replacements);
+            setDraft(replacements);
             setStorageError(staleBlobWarning(staleBlobCount));
           } else {
             setStorageError(staleBlobWarning(localResult.staleBlobCount));
@@ -93,7 +91,8 @@ export function useCustomBuildings() {
         if (cancelled) return;
         try {
           const localResult = loadAndSanitizeStoreFromLocalStorage();
-          setStore(localResult.store);
+          setCommitted(localResult.store.replacements);
+          setDraft(localResult.store.replacements);
           const base =
             error instanceof Error
               ? error.message
@@ -114,44 +113,48 @@ export function useCustomBuildings() {
         }
       }
     })();
-
     return () => {
       cancelled = true;
     };
   }, [skipNextPersistRef]);
 
+  const visibleDraft = useMemo(
+    () => draft.filter((item) => !pendingDeleteIds.includes(item.id)),
+    [draft, pendingDeleteIds],
+  );
+
+  const isDirty = useMemo(() => {
+    if (pendingDeleteIds.length > 0) return true;
+    return !replacementsEqual(draft, committed);
+  }, [draft, committed, pendingDeleteIds]);
+
   useEffect(() => {
     if (!hydrated) return;
     try {
-      saveStoreToLocalStorage(store);
+      saveStoreToLocalStorage({
+        version: 1,
+        selectedBuildingId,
+        replacements: committed,
+      });
     } catch {
-      /* ignore quota */
+      /* ignore */
     }
-  }, [store, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    if (skipNextPersistRef.current) {
-      skipNextPersistRef.current = false;
-      return;
-    }
-    schedulePersist(store.replacements);
-  }, [store.replacements, hydrated, schedulePersist, skipNextPersistRef]);
+  }, [committed, selectedBuildingId, hydrated]);
 
   const activeReplacement = useMemo(() => {
-    if (!store.selectedBuildingId) return null;
-    return store.replacements.find((r) => r.id === store.selectedBuildingId) ?? null;
-  }, [store]);
+    if (!selectedBuildingId || pendingDeleteIds.includes(selectedBuildingId)) return null;
+    return draft.find((r) => r.id === selectedBuildingId) ?? null;
+  }, [draft, selectedBuildingId, pendingDeleteIds]);
 
   const upsertReplacement = useCallback((model: CustomBuildingModel) => {
-    setStore((prev) => {
-      const index = prev.replacements.findIndex((r) => r.id === model.id);
-      const replacements =
-        index >= 0
-          ? prev.replacements.map((r, i) => (i === index ? model : r))
-          : [...prev.replacements, model];
-      return { ...prev, replacements, selectedBuildingId: model.id };
+    setDraft((prev) => {
+      const index = prev.findIndex((r) => r.id === model.id);
+      return index >= 0
+        ? prev.map((r, i) => (i === index ? model : r))
+        : [...prev, model];
     });
+    setPendingDeleteIds((ids) => ids.filter((id) => id !== model.id));
+    setSelectedBuildingId(model.id);
   }, []);
 
   const applyReplacement = useCallback(
@@ -161,103 +164,58 @@ export function useCustomBuildings() {
       altitude = DEFAULT_MODEL_ALTITUDE,
       modelLabel?: string,
     ) => {
-      const trimmed = modelUrl.trim();
-      if (!trimmed) throw new Error("Model URL is empty.");
-      if (trimmed.startsWith("blob:")) {
-        throw new Error(
-          "Uploaded model is not durable yet. Wait for upload to finish, or use a hosted URL.",
-        );
-      }
-
-      const now = new Date().toISOString();
-      const existing = storeRef.current.replacements.find(
-        (r) => identityKey(r.buildingIdentity) === identityKey(building.identity),
-      );
-      const resolvedUrl = resolveDurableModelUrl(trimmed);
-      if (resolvedUrl.startsWith("blob:")) {
-        throw new Error(
-          "Blob URLs cannot be saved. Upload the GLB so it is stored on the server.",
-        );
-      }
-
-      const model: CustomBuildingModel = {
-        id: existing?.id ?? createId(),
-        buildingIdentity: building.identity,
-        modelUrl: resolvedUrl,
-        modelLabel: modelLabelFromUrl(resolvedUrl, modelLabel),
-        longitude: building.centerLng,
-        latitude: building.centerLat,
+      const existing =
+        findByIdentity(draftRef.current, building) ?? findByIdentity(committed, building);
+      const model = buildReplacementModel(
+        building,
+        modelUrl,
+        existing,
         altitude,
-        rotationX: existing?.rotationX ?? DEFAULT_MODEL_ROTATION_X_DEG,
-        rotationY: existing?.rotationY ?? DEFAULT_MODEL_ROTATION_Y_DEG,
-        rotationZ: existing?.rotationZ ?? DEFAULT_MODEL_ROTATION_Z_DEG,
-        scale: existing?.scale ?? DEFAULT_MODEL_SCALE,
-        minZoom: existing?.minZoom ?? DEFAULT_MODEL_MIN_ZOOM,
-        visible: true,
-        footprintGeometry: building.geometry,
-        sourceGeometry: building.sourceGeometry,
-        preservedSiblings: building.preservedSiblings,
-        vectorFeatureId: building.featureId ?? existing?.vectorFeatureId,
-        vectorSourceLayer: building.sourceLayer,
-        filterPropertyKey: building.filterPropertyKey,
-        filterPropertyValue: building.filterPropertyValue,
-        buildingHeight: building.height ?? 15,
-        buildingMinHeight: building.minHeight ?? 0,
-        hideWarning: !building.canFilterHide,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      };
+        modelLabel,
+      );
       upsertReplacement(model);
       return model;
     },
-    [upsertReplacement],
+    [committed, upsertReplacement],
   );
 
   const updateActiveTransform = useCallback((patch: Partial<CustomBuildingModel>) => {
-    setStore((prev) => {
-      if (!prev.selectedBuildingId) return prev;
-      return {
-        ...prev,
-        replacements: prev.replacements.map((r) =>
-          r.id === prev.selectedBuildingId
-            ? { ...r, ...patch, updatedAt: new Date().toISOString() }
-            : r,
-        ),
-      };
+    setDraft((prev) => {
+      if (!selectedBuildingId) return prev;
+      return prev.map((r) =>
+        r.id === selectedBuildingId
+          ? { ...r, ...patch, updatedAt: new Date().toISOString() }
+          : r,
+      );
     });
-  }, []);
+  }, [selectedBuildingId]);
 
-  const patchReplacement = useCallback(
-    (id: string, patch: Partial<CustomBuildingModel>) => {
-      setStore((prev) => ({
-        ...prev,
-        replacements: prev.replacements.map((r) =>
-          r.id === id ? { ...r, ...patch, updatedAt: new Date().toISOString() } : r,
-        ),
-      }));
-    },
-    [],
-  );
+  const patchReplacement = useCallback((id: string, patch: Partial<CustomBuildingModel>) => {
+    setDraft((prev) =>
+      prev.map((r) =>
+        r.id === id ? { ...r, ...patch, updatedAt: new Date().toISOString() } : r,
+      ),
+    );
+  }, []);
 
   const selectReplacement = useCallback((id: string | null) => {
-    setStore((prev) => ({ ...prev, selectedBuildingId: id }));
+    setSelectedBuildingId(id);
   }, []);
 
-  const removeReplacement = useCallback((id: string) => {
-    setStore((prev) => ({
-      ...prev,
-      selectedBuildingId: prev.selectedBuildingId === id ? null : prev.selectedBuildingId,
-      replacements: prev.replacements.filter((r) => r.id !== id),
-    }));
+  const markDeleteReplacement = useCallback((id: string) => {
+    setPendingDeleteIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
+    setSelectedBuildingId((current) => (current === id ? null : current));
+  }, []);
+
+  const unmarkDeleteReplacement = useCallback((id: string) => {
+    setPendingDeleteIds((ids) => ids.filter((x) => x !== id));
   }, []);
 
   const clearAllReplacements = useCallback(() => {
-    setStore((prev) => ({
-      ...prev,
-      selectedBuildingId: null,
-      replacements: [],
-    }));
-  }, []);
+    setDraft(committed);
+    setPendingDeleteIds(committed.map((r) => r.id));
+    setSelectedBuildingId(null);
+  }, [committed]);
 
   const resetActiveTransform = useCallback(() => {
     updateActiveTransform({
@@ -271,40 +229,72 @@ export function useCustomBuildings() {
     });
   }, [updateActiveTransform]);
 
+  const saveDraft = useCallback(async () => {
+    const next = draft.filter((item) => !pendingDeleteIds.includes(item.id));
+    setSaving(true);
+    try {
+      const saved = await persistNow(next);
+      setCommitted(saved);
+      setDraft(saved);
+      setPendingDeleteIds([]);
+      setStorageError(null);
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, pendingDeleteIds, persistNow]);
+
+  const discardDraft = useCallback(() => {
+    setDraft(committed);
+    setPendingDeleteIds([]);
+    setSelectedBuildingId((id) =>
+      id && committed.some((r) => r.id === id) ? id : null,
+    );
+  }, [committed]);
+
   const exportJson = useCallback(() => {
-    downloadJson("building-replacements.json", exportConfig(store.replacements));
-  }, [store.replacements]);
+    downloadJson("building-replacements.json", exportConfig(visibleDraft));
+  }, [visibleDraft]);
 
   const importJson = useCallback((data: unknown) => {
     const parsed: ConfigExport = validateConfigExport(data);
-    setStore((prev) => ({
-      ...prev,
-      replacements: parsed.replacements,
-      selectedBuildingId: parsed.replacements[0]?.id ?? null,
-    }));
+    setDraft(parsed.replacements);
+    setPendingDeleteIds([]);
+    setSelectedBuildingId(parsed.replacements[0]?.id ?? null);
   }, []);
 
-  const useSampleForBuilding = useCallback(
-    (building: SelectedBuilding, altitude?: number) =>
-      applyReplacement(building, DEFAULT_APPLY_MODEL_URL, altitude),
-    [applyReplacement],
+  const store: CustomBuildingStore = useMemo(
+    () => ({
+      version: 1,
+      selectedBuildingId,
+      replacements: visibleDraft,
+    }),
+    [selectedBuildingId, visibleDraft],
   );
 
   return {
     store,
+    draftReplacements: draft,
     hydrated,
     storageError,
+    saving,
+    isDirty,
+    pendingDeleteIds,
     activeReplacement,
     upsertReplacement,
     applyReplacement,
     updateActiveTransform,
     patchReplacement,
     selectReplacement,
-    removeReplacement,
+    markDeleteReplacement,
+    unmarkDeleteReplacement,
+    removeReplacement: markDeleteReplacement,
     clearAllReplacements,
     resetActiveTransform,
+    saveDraft,
+    discardDraft,
     exportJson,
     importJson,
-    useSampleForBuilding,
+    useSampleForBuilding: (building: SelectedBuilding, altitude?: number) =>
+      applyReplacement(building, DEFAULT_APPLY_MODEL_URL, altitude),
   };
 }

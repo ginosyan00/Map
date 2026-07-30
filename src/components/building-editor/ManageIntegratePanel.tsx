@@ -170,11 +170,11 @@ export function ManageIntegratePanel({
             onClick={() => {
               if (
                 window.confirm(
-                  `Delete all ${replacementCount} replacement(s)? This syncs an empty list to the database.`,
+                  `Mark all ${replacementCount} replacement(s) for delete? Press Save in the Saved list to confirm.`,
                 )
               ) {
                 onClearAll();
-                flash("All replacements cleared.");
+                flash("Marked for delete — press Save to confirm.");
               }
             }}
           >

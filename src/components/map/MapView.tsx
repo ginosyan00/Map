@@ -42,11 +42,13 @@ import {
 } from "./BuildingHighlightLayer";
 import { attachBuildingSelection } from "./BuildingSelectionLayer";
 import {
-  ensureCustomBuildingLayer,
-  removeCustomBuildingLayer,
   type CustomBuildingLayer,
   type CustomLayerStatus,
 } from "./CustomBuildingLayer";
+import {
+  ensureCustomBuildingLayer,
+  removeCustomBuildingLayer,
+} from "./ensure-custom-building-layer";
 import { MapControls } from "./MapControls";
 import { WeatherOverlay } from "./WeatherOverlay";
 import {

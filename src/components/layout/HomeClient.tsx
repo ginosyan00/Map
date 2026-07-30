@@ -10,8 +10,10 @@ import { useGraphicOptions } from "@/hooks/useGraphicOptions";
 import { useModelLoader } from "@/hooks/useModelLoader";
 import { useSelectedBuilding } from "@/hooks/useSelectedBuilding";
 import { DEFAULT_APPLY_MODEL_URL } from "@/lib/map/constants";
+import { identityKey } from "@/lib/map/building-identification";
 import { validateConfigExport } from "@/lib/storage/custom-buildings-storage";
 import type { MapDebugSnapshot } from "@/types/map";
+import type { SelectedBuilding } from "@/types/building";
 
 const EMPTY_DEBUG: MapDebugSnapshot = {
   zoom: 0,
@@ -48,6 +50,22 @@ export function HomeClient() {
     if (selected) return "building selected";
     return "ready";
   }, [mapError, buildings.hydrated, selected]);
+
+  const onMapSelect = useCallback(
+    (building: SelectedBuilding) => {
+      selectBuilding(building);
+      const match = buildings.store.replacements.find(
+        (r) => identityKey(r.buildingIdentity) === identityKey(building.identity),
+      );
+      buildings.selectReplacement(match?.id ?? null);
+      setPanelError(null);
+    },
+    [selectBuilding, buildings],
+  );
+
+  const onEmptyClick = useCallback(() => {
+    clearSelection();
+  }, [clearSelection]);
 
   const onUseSample = useCallback(() => {
     modelLoader.setUrl(DEFAULT_APPLY_MODEL_URL, "Sample building (GLB)");
@@ -156,8 +174,8 @@ export function HomeClient() {
             atmosphereInput={graphic.atmosphereInput}
             focusTarget={focusTarget}
             resetViewTick={resetViewTick}
-            onSelect={selectBuilding}
-            onEmptyClick={clearSelection}
+            onSelect={onMapSelect}
+            onEmptyClick={onEmptyClick}
             onHideWarning={setHideWarning}
             onMapError={setMapError}
             onLayerStatus={setLayerStatus}
@@ -197,9 +215,7 @@ export function HomeClient() {
           onSelectReplacement={buildings.selectReplacement}
           onDeleteReplacement={buildings.removeReplacement}
           onToggleReplacementVisible={(id, visible) => {
-            const item = buildings.store.replacements.find((r) => r.id === id);
-            if (!item) return;
-            buildings.upsertReplacement({ ...item, visible });
+            buildings.patchReplacement(id, { visible });
           }}
           onFocusReplacement={(id) => {
             const item = buildings.store.replacements.find((r) => r.id === id);

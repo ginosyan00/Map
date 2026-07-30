@@ -47,7 +47,7 @@ export const MAX_GLB_BYTES = Number(
   process.env.NEXT_PUBLIC_MAX_GLB_BYTES ?? 25 * 1024 * 1024,
 );
 
-export const ALLOWED_MODEL_EXTENSIONS = [".glb", ".gltf"] as const;
+export const ALLOWED_MODEL_EXTENSIONS = [".glb"] as const;
 
 export function degToRad(degrees: number): number {
   return (degrees * Math.PI) / 180;

@@ -1,10 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ALLOWED_MODEL_EXTENSIONS,
-  MAX_GLB_BYTES,
-} from "@/lib/map/constants";
+import { MAX_GLB_BYTES } from "@/lib/map/constants";
 import { uploadModelFile } from "@/lib/storage/models-api";
 
 export type ModelLoadState = "idle" | "loading" | "success" | "error";
@@ -15,9 +12,8 @@ export type ModelSource = {
   revokeOnCleanup: boolean;
 };
 
-function hasAllowedExtension(name: string): boolean {
-  const lower = name.toLowerCase();
-  return ALLOWED_MODEL_EXTENSIONS.some((ext) => lower.endsWith(ext));
+function isGlbFile(name: string): boolean {
+  return name.toLowerCase().endsWith(".glb");
 }
 
 export function useModelLoader() {
@@ -25,6 +21,7 @@ export function useModelLoader() {
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<ModelSource | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const revokeCurrent = useCallback(() => {
     if (objectUrlRef.current) {
@@ -35,10 +32,15 @@ export function useModelLoader() {
 
   useEffect(() => () => revokeCurrent(), [revokeCurrent]);
 
+  const bumpRequest = useCallback(() => {
+    requestIdRef.current += 1;
+    return requestIdRef.current;
+  }, []);
+
   const setUrl = useCallback(
     (url: string, label = url) => {
+      bumpRequest();
       revokeCurrent();
-      setState("loading");
       setError(null);
       if (!url.trim()) {
         setState("error");
@@ -55,33 +57,35 @@ export function useModelLoader() {
       setSource({ url: url.trim(), label, revokeOnCleanup: false });
       setState("success");
     },
-    [revokeCurrent],
+    [bumpRequest, revokeCurrent],
   );
 
   const uploadFile = useCallback(
     (file: File) => {
+      const requestId = bumpRequest();
+      revokeCurrent();
+      setError(null);
+
+      if (!isGlbFile(file.name)) {
+        setState("error");
+        setError("Only .glb files are supported.");
+        setSource(null);
+        return;
+      }
+      if (file.size > MAX_GLB_BYTES) {
+        setState("error");
+        setError(
+          `File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Max ${(MAX_GLB_BYTES / (1024 * 1024)).toFixed(0)} MB.`,
+        );
+        setSource(null);
+        return;
+      }
+
+      setState("loading");
       void (async () => {
-        revokeCurrent();
-        setError(null);
-
-        if (!hasAllowedExtension(file.name)) {
-          setState("error");
-          setError("Only .glb (recommended) or .gltf files are allowed.");
-          setSource(null);
-          return;
-        }
-        if (file.size > MAX_GLB_BYTES) {
-          setState("error");
-          setError(
-            `File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Max ${(MAX_GLB_BYTES / (1024 * 1024)).toFixed(0)} MB.`,
-          );
-          setSource(null);
-          return;
-        }
-
-        setState("loading");
         try {
           const uploaded = await uploadModelFile(file);
+          if (requestId !== requestIdRef.current) return;
           setSource({
             url: uploaded.url,
             label: uploaded.label,
@@ -89,21 +93,23 @@ export function useModelLoader() {
           });
           setState("success");
         } catch (err) {
+          if (requestId !== requestIdRef.current) return;
           setState("error");
           setError(err instanceof Error ? err.message : "Failed to upload model.");
           setSource(null);
         }
       })();
     },
-    [revokeCurrent],
+    [bumpRequest, revokeCurrent],
   );
 
   const clear = useCallback(() => {
+    bumpRequest();
     revokeCurrent();
     setSource(null);
     setState("idle");
     setError(null);
-  }, [revokeCurrent]);
+  }, [bumpRequest, revokeCurrent]);
 
   return {
     state,
@@ -113,6 +119,7 @@ export function useModelLoader() {
     uploadFile,
     clear,
     markError: (message: string) => {
+      bumpRequest();
       setState("error");
       setError(message);
     },

@@ -25,11 +25,8 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const name = file.name.toLowerCase();
-    if (!name.endsWith(".glb") && !name.endsWith(".gltf")) {
-      return NextResponse.json(
-        { error: "Only .glb or .gltf files are allowed." },
-        { status: 400 },
-      );
+    if (!name.endsWith(".glb")) {
+      return NextResponse.json({ error: "Only .glb files are allowed." }, { status: 400 });
     }
 
     if (file.size <= 0 || file.size > MAX_GLB_BYTES) {

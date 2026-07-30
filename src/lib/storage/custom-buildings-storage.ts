@@ -120,7 +120,13 @@ export function validateConfigExport(value: unknown): ConfigExport {
     if (!isCustomBuildingModel(item)) {
       throw new Error("Invalid configuration: one or more replacements failed validation.");
     }
-    replacements.push(withSynthesizedFootprint(item));
+    const sanitized = sanitizeReplacementModelUrl(item.modelUrl);
+    if (sanitized.wasStaleBlob) {
+      throw new Error(
+        "Invalid configuration: blob: model URLs are not durable. Re-upload models before exporting.",
+      );
+    }
+    replacements.push(withSynthesizedFootprint({ ...item, modelUrl: sanitized.modelUrl }));
   }
   return {
     version: 1,

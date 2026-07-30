@@ -503,9 +503,13 @@ export function applyHiddenBuildings(
 
   // Resolve against all building layers (2D fill + 3D extrusion).
   const pickLayers = layerList;
-  enrichPreservedSiblings(map, replacements, extrusionLayers.length > 0 ? extrusionLayers : pickLayers);
-  const resolved = resolveTargetsAgainstMap(map, targets, pickLayers, replacements);
-  syncReplacementGeoLayers(map, replacements);
+  const enriched = enrichPreservedSiblings(
+    map,
+    replacements,
+    extrusionLayers.length > 0 ? extrusionLayers : pickLayers,
+  );
+  const resolved = resolveTargetsAgainstMap(map, targets, pickLayers, enriched);
+  syncReplacementGeoLayers(map, enriched);
 
   void options.skipExpand;
   const ids = collectStateIds(resolved);
@@ -580,15 +584,17 @@ function enrichPreservedSiblings(
   map: MapLibreMap,
   replacements: CustomBuildingModel[],
   layerList: BuildingLayerInfo[],
-): void {
-  for (const replacement of replacements) {
-    if (replacement.preservedSiblings && replacement.preservedSiblings.length > 0) continue;
+): CustomBuildingModel[] {
+  return replacements.map((replacement) => {
+    if (replacement.preservedSiblings && replacement.preservedSiblings.length > 0) {
+      return replacement;
+    }
     if (!replacement.footprintGeometry || replacement.footprintGeometry.type !== "Polygon") {
-      continue;
+      return replacement;
     }
 
     const layer = layerList[0];
-    if (!layer) continue;
+    if (!layer) return replacement;
 
     let features: ReturnType<MapLibreMap["querySourceFeatures"]> = [];
     try {
@@ -596,7 +602,7 @@ function enrichPreservedSiblings(
         sourceLayer: layer.sourceLayer,
       });
     } catch {
-      continue;
+      return replacement;
     }
 
     const key = replacement.filterPropertyKey;
@@ -620,12 +626,17 @@ function enrichPreservedSiblings(
         replacement.footprintGeometry,
       );
       if (siblings.length > 0) {
-        replacement.preservedSiblings = siblings;
-        replacement.sourceGeometry = feature.geometry as BuildingGeometry;
+        return {
+          ...replacement,
+          preservedSiblings: siblings,
+          sourceGeometry: feature.geometry as BuildingGeometry,
+        };
       }
       break;
     }
-  }
+
+    return replacement;
+  });
 }
 
 export function restoreOriginalBuildingFilter(

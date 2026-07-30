@@ -21,7 +21,6 @@ import { useReplacementPersist } from "@/hooks/useReplacementPersist";
 import {
   downloadJson,
   exportConfig,
-  hasMigratedLocalToDb,
   loadAndSanitizeStoreFromLocalStorage,
   markMigratedLocalToDb,
   saveStoreToLocalStorage,
@@ -69,7 +68,9 @@ export function useCustomBuildings() {
           setStorageError(staleBlobWarning(staleBlobCount));
         } else {
           const localResult = loadAndSanitizeStoreFromLocalStorage();
-          if (localResult.store.replacements.length > 0 && !hasMigratedLocalToDb()) {
+          if (localResult.store.replacements.length > 0) {
+            // Remigrate whenever DB is empty but local still has data
+            // (covers wiped DB + stale migratedOnce flag).
             const saved = await saveReplacementsToApi(localResult.store.replacements);
             if (cancelled) return;
             markMigratedLocalToDb();
@@ -218,6 +219,18 @@ export function useCustomBuildings() {
     });
   }, []);
 
+  const patchReplacement = useCallback(
+    (id: string, patch: Partial<CustomBuildingModel>) => {
+      setStore((prev) => ({
+        ...prev,
+        replacements: prev.replacements.map((r) =>
+          r.id === id ? { ...r, ...patch, updatedAt: new Date().toISOString() } : r,
+        ),
+      }));
+    },
+    [],
+  );
+
   const selectReplacement = useCallback((id: string | null) => {
     setStore((prev) => ({ ...prev, selectedBuildingId: id }));
   }, []);
@@ -269,6 +282,7 @@ export function useCustomBuildings() {
     upsertReplacement,
     applyReplacement,
     updateActiveTransform,
+    patchReplacement,
     selectReplacement,
     removeReplacement,
     resetActiveTransform,

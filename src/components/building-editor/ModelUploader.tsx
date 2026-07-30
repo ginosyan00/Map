@@ -29,7 +29,7 @@ export function ModelUploader({
           Upload GLB
           <input
             type="file"
-            accept=".glb,.gltf,model/gltf-binary,model/gltf+json"
+            accept=".glb,model/gltf-binary"
             hidden
             disabled={busy}
             onChange={(event) => {

@@ -1,11 +1,11 @@
-import maplibregl, {
+import {
   type CustomLayerInterface,
   type CustomRenderMethodInput,
   type Map as MapLibreMap,
+  MercatorCoordinate,
 } from "maplibre-gl";
 import {
   AmbientLight,
-  Box3,
   Camera,
   DirectionalLight,
   Matrix4,
@@ -20,7 +20,7 @@ import type { CustomBuildingModel } from "@/types/building";
 import { CUSTOM_LAYER_ID, degToRad, isDev } from "@/lib/map/constants";
 import { disposeThreeObject } from "@/lib/three/dispose-three-object";
 import { loadGlbModel } from "@/lib/three/load-glb-model";
-import { MercatorCoordinate } from "maplibre-gl";
+import { prepareModelForMap } from "@/lib/three/prepare-model-for-map";
 
 type ManagedModel = {
   config: CustomBuildingModel;
@@ -28,6 +28,8 @@ type ManagedModel = {
   object: Object3D | null;
   loading: boolean;
   error: string | null;
+  /** Bumped to ignore stale async load completions. */
+  loadGeneration: number;
 };
 
 export type CustomLayerStatus = {
@@ -157,6 +159,7 @@ export class CustomBuildingLayer implements CustomLayerInterface {
           object: null,
           loading: false,
           error: null,
+          loadGeneration: 0,
         });
         void this.ensureLoaded(config.id);
         continue;
@@ -164,10 +167,18 @@ export class CustomBuildingLayer implements CustomLayerInterface {
 
       const urlChanged = existing.config.modelUrl !== config.modelUrl;
       existing.config = { ...config };
-      if (urlChanged) {
+
+      // Retry only on URL change, or when stuck with no object/error (interrupted load).
+      // Do not auto-retry while a prior error remains — that would loop on every setModels.
+      const stuckWithoutError =
+        !existing.object && !existing.loading && existing.error === null;
+      const needsReload = urlChanged || stuckWithoutError;
+      if (needsReload) {
         this.disposeManaged(existing);
         existing.object = null;
         existing.error = null;
+        existing.loading = false;
+        existing.loadGeneration += 1;
         void this.ensureLoaded(config.id);
       }
     }
@@ -233,13 +244,16 @@ export class CustomBuildingLayer implements CustomLayerInterface {
     const managed = this.models.get(id);
     if (!managed || managed.object || managed.loading) return;
 
+    const generation = managed.loadGeneration;
+    const modelUrl = managed.config.modelUrl;
     managed.loading = true;
     managed.error = null;
     this.emitStatus();
 
     try {
-      const { root, fromProcedural, warning } = await loadGlbModel(managed.config.modelUrl);
-      if (!this.models.has(id)) {
+      const { root, fromProcedural, warning } = await loadGlbModel(modelUrl);
+      const current = this.models.get(id);
+      if (!current || current.loadGeneration !== generation) {
         disposeThreeObject(root);
         return;
       }
@@ -258,29 +272,31 @@ export class CustomBuildingLayer implements CustomLayerInterface {
         }
       });
 
-      prepareModelForMap(root, managed.config.buildingHeight ?? undefined);
+      prepareModelForMap(root, current.config.buildingHeight ?? undefined);
 
       this.scene.add(root);
-      managed.object = root;
-      managed.loading = false;
-      managed.error = warning ?? null;
+      current.object = root;
+      current.loading = false;
+      current.error = warning ?? null;
 
       if (isDev()) {
         console.log("[omt-glb-poc] GLB ready at", {
           id,
           fromProcedural,
-          lng: managed.config.longitude,
-          lat: managed.config.latitude,
-          alt: managed.config.altitude,
-          scale: managed.config.scale,
-          rotX: managed.config.rotationX,
+          lng: current.config.longitude,
+          lat: current.config.latitude,
+          alt: current.config.altitude,
+          scale: current.config.scale,
+          rotX: current.config.rotationX,
         });
       }
       this.map?.triggerRepaint();
     } catch (error) {
-      managed.loading = false;
-      managed.object = null;
-      managed.error = error instanceof Error ? error.message : "Model load failed";
+      const current = this.models.get(id);
+      if (!current || current.loadGeneration !== generation) return;
+      current.loading = false;
+      current.object = null;
+      current.error = error instanceof Error ? error.message : "Model load failed";
       console.warn("[omt-glb-poc] ensureLoaded failed for", id, error);
     }
     this.emitStatus();
@@ -307,67 +323,35 @@ export class CustomBuildingLayer implements CustomLayerInterface {
 
   private onContextRestored = (): void => {
     this.contextLost = false;
+    const map = this.map;
+    if (!map) {
+      this.emitStatus();
+      return;
+    }
+
+    this.renderer?.dispose();
+    const gl = map.getCanvas().getContext("webgl2") ?? map.getCanvas().getContext("webgl");
+    if (gl) {
+      this.renderer = new WebGLRenderer({
+        canvas: map.getCanvas(),
+        context: gl as WebGLRenderingContext,
+        antialias: true,
+      });
+      this.renderer.autoClear = false;
+    } else {
+      this.renderer = null;
+    }
+
+    for (const [id, managed] of this.models) {
+      this.disposeManaged(managed);
+      managed.object = null;
+      managed.error = null;
+      managed.loading = false;
+      managed.loadGeneration += 1;
+      void this.ensureLoaded(id);
+    }
+
     this.emitStatus();
-    this.map?.triggerRepaint();
+    map.triggerRepaint();
   };
 }
-
-export function ensureCustomBuildingLayer(map: MapLibreMap): CustomBuildingLayer {
-  const existing = map.getLayer(CUSTOM_LAYER_ID);
-  if (existing) {
-    const attached = (map as MapLibreMap & { __customBuildingLayer?: CustomBuildingLayer })
-      .__customBuildingLayer;
-    if (attached) return attached;
-    map.removeLayer(CUSTOM_LAYER_ID);
-  }
-
-  const layer = new CustomBuildingLayer();
-  map.addLayer(layer);
-  (map as MapLibreMap & { __customBuildingLayer?: CustomBuildingLayer }).__customBuildingLayer =
-    layer;
-  return layer;
-}
-
-export function removeCustomBuildingLayer(map: MapLibreMap): void {
-  if (map.getLayer(CUSTOM_LAYER_ID)) {
-    map.removeLayer(CUSTOM_LAYER_ID);
-  }
-  delete (map as MapLibreMap & { __customBuildingLayer?: CustomBuildingLayer })
-    .__customBuildingLayer;
-}
-
-/**
- * Place model origin at ground center; keep units in meters.
- * Only auto-rescales when the asset is absurdly tiny/huge.
- */
-function prepareModelForMap(root: Object3D, buildingHeight?: number): void {
-  root.position.set(0, 0, 0);
-  root.rotation.set(0, 0, 0);
-  root.scale.set(1, 1, 1);
-  root.updateMatrixWorld(true);
-
-  const box = new Box3().setFromObject(root);
-  if (box.isEmpty()) return;
-
-  const size = new Vector3();
-  const center = new Vector3();
-  box.getSize(size);
-  box.getCenter(center);
-
-  root.position.x -= center.x;
-  root.position.z -= center.z;
-  root.position.y -= box.min.y;
-  root.updateMatrixWorld(true);
-
-  const maxDim = Math.max(size.x, size.y, size.z);
-  const targetHeight = Math.max(Number(buildingHeight ?? 0), 12);
-  if (maxDim > 0 && (maxDim < 0.5 || maxDim > 250)) {
-    const factor = targetHeight / Math.max(size.y, 0.001);
-    root.scale.multiplyScalar(factor);
-    root.updateMatrixWorld(true);
-    const grounded = new Box3().setFromObject(root);
-    root.position.y -= grounded.min.y;
-  }
-}
-
-export { maplibregl };

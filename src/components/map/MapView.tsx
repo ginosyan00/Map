@@ -28,6 +28,7 @@ import {
   type AtmosphereOptions,
 } from "@/lib/map/atmosphere";
 import { applyBasemapLook } from "@/lib/map/basemap-polish";
+import { attachMissingImageFallback } from "@/lib/map/missing-images";
 import { applyTerrain } from "@/lib/map/terrain";
 import {
   cinematicFlyTo,
@@ -243,6 +244,9 @@ export function MapView(props: Props) {
           fadeDuration: 280,
           canvasContextAttributes: { antialias: true },
         });
+
+        // OpenFreeMap sprite gaps (office, atm, gate, …) → silent placeholders.
+        cleanupFns.push(attachMissingImageFallback(map));
 
         // Smoother wheel zoom for pitched 3D navigation.
         map.scrollZoom.setWheelZoomRate(1 / 450);

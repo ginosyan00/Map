@@ -7,16 +7,29 @@ const globalForPrisma = globalThis as typeof globalThis & {
   pgPool?: pg.Pool;
 };
 
+/** Avoid pg sslmode=require deprecation warning (aliases to verify-full today). */
+function normalizeDatabaseUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.searchParams.get("sslmode") === "require") {
+      parsed.searchParams.set("sslmode", "verify-full");
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 function createPrismaClient(): PrismaClient {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) {
     throw new Error("DATABASE_URL is not set.");
   }
 
   const pool =
     globalForPrisma.pgPool ??
     new pg.Pool({
-      connectionString,
+      connectionString: normalizeDatabaseUrl(raw),
       max: 10,
       // Neon pooler + serverless-friendly timeouts
       connectionTimeoutMillis: 10_000,

@@ -5,6 +5,7 @@ import {
   ALLOWED_MODEL_EXTENSIONS,
   MAX_GLB_BYTES,
 } from "@/lib/map/constants";
+import { uploadModelFile } from "@/lib/storage/models-api";
 
 export type ModelLoadState = "idle" | "loading" | "success" | "error";
 
@@ -14,24 +15,9 @@ export type ModelSource = {
   revokeOnCleanup: boolean;
 };
 
-/** Persist uploads across refresh when small enough for localStorage. */
-const DATA_URL_MAX_BYTES = 3 * 1024 * 1024;
-
 function hasAllowedExtension(name: string): boolean {
   const lower = name.toLowerCase();
   return ALLOWED_MODEL_EXTENSIONS.some((ext) => lower.endsWith(ext));
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") resolve(reader.result);
-      else reject(new Error("Failed to read file as data URL."));
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed."));
-    reader.readAsDataURL(file);
-  });
 }
 
 export function useModelLoader() {
@@ -57,6 +43,12 @@ export function useModelLoader() {
       if (!url.trim()) {
         setState("error");
         setError("Model URL is empty.");
+        setSource(null);
+        return;
+      }
+      if (url.trim().startsWith("blob:")) {
+        setState("error");
+        setError("Blob URLs are not durable. Upload the file or use a hosted http(s) URL.");
         setSource(null);
         return;
       }
@@ -89,18 +81,16 @@ export function useModelLoader() {
 
         setState("loading");
         try {
-          if (file.size <= DATA_URL_MAX_BYTES) {
-            const dataUrl = await readFileAsDataUrl(file);
-            setSource({ url: dataUrl, label: file.name, revokeOnCleanup: false });
-          } else {
-            const objectUrl = URL.createObjectURL(file);
-            objectUrlRef.current = objectUrl;
-            setSource({ url: objectUrl, label: file.name, revokeOnCleanup: true });
-          }
+          const uploaded = await uploadModelFile(file);
+          setSource({
+            url: uploaded.url,
+            label: uploaded.label,
+            revokeOnCleanup: false,
+          });
           setState("success");
         } catch (err) {
           setState("error");
-          setError(err instanceof Error ? err.message : "Failed to read uploaded file.");
+          setError(err instanceof Error ? err.message : "Failed to upload model.");
           setSource(null);
         }
       })();

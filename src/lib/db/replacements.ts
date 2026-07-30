@@ -1,11 +1,14 @@
 import type { CustomBuildingModel } from "@/types/building";
-import { isCustomBuildingModel } from "@/lib/storage/custom-buildings-storage";
+import {
+  isCustomBuildingModel,
+  withSynthesizedFootprint,
+} from "@/lib/storage/custom-buildings-storage";
 import { prisma } from "@/lib/db/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 
 function rowToModel(payload: Prisma.JsonValue): CustomBuildingModel | null {
   if (!isCustomBuildingModel(payload)) return null;
-  return payload;
+  return withSynthesizedFootprint(payload);
 }
 
 export async function listReplacements(): Promise<CustomBuildingModel[]> {
@@ -52,6 +55,3 @@ export async function syncReplacements(
   return listReplacements();
 }
 
-export async function deleteReplacement(id: string): Promise<void> {
-  await prisma.buildingReplacement.deleteMany({ where: { id } });
-}

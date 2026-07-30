@@ -42,3 +42,7 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# Uploaded GLB models (served via /api/models)
+/uploads
+!/uploads/.gitkeep

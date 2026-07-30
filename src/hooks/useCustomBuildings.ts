@@ -17,20 +17,26 @@ import {
   DEFAULT_APPLY_MODEL_URL,
 } from "@/lib/map/constants";
 import { identityKey } from "@/lib/map/building-identification";
+import { useReplacementPersist } from "@/hooks/useReplacementPersist";
 import {
   downloadJson,
   exportConfig,
-  loadStoreFromLocalStorage,
+  hasMigratedLocalToDb,
+  loadAndSanitizeStoreFromLocalStorage,
+  markMigratedLocalToDb,
   saveStoreToLocalStorage,
   validateConfigExport,
 } from "@/lib/storage/custom-buildings-storage";
+import {
+  modelLabelFromUrl,
+  sanitizeLoadedReplacements,
+  staleBlobWarning,
+} from "@/lib/storage/replacement-sanitize";
 import {
   fetchReplacementsFromApi,
   saveReplacementsToApi,
 } from "@/lib/storage/replacements-api";
 import { resolveDurableModelUrl } from "@/lib/three/load-glb-model";
-
-const SAVE_DEBOUNCE_MS = 600;
 
 function createId(): string {
   return `custom-building-${crypto.randomUUID()}`;
@@ -44,8 +50,9 @@ export function useCustomBuildings() {
   });
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
-  const skipNextPersistRef = useRef(true);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { schedulePersist, skipNextPersistRef } = useReplacementPersist(setStorageError);
+  const storeRef = useRef(store);
+  storeRef.current = store;
 
   useEffect(() => {
     let cancelled = false;
@@ -56,38 +63,41 @@ export function useCustomBuildings() {
         if (cancelled) return;
 
         if (fromDb.length > 0) {
-          setStore({
-            version: 1,
-            selectedBuildingId: null,
-            replacements: fromDb,
-          });
+          const { replacements, staleBlobCount } = sanitizeLoadedReplacements(fromDb);
+          setStore({ version: 1, selectedBuildingId: null, replacements });
+          markMigratedLocalToDb();
+          setStorageError(staleBlobWarning(staleBlobCount));
         } else {
-          // First-time: migrate any existing localStorage data into Neon.
-          const local = loadStoreFromLocalStorage();
-          if (local.replacements.length > 0) {
-            const saved = await saveReplacementsToApi(local.replacements);
+          const localResult = loadAndSanitizeStoreFromLocalStorage();
+          if (localResult.store.replacements.length > 0 && !hasMigratedLocalToDb()) {
+            const saved = await saveReplacementsToApi(localResult.store.replacements);
             if (cancelled) return;
-            setStore({
-              version: 1,
-              selectedBuildingId: null,
-              replacements: saved,
-            });
+            markMigratedLocalToDb();
+            const { replacements, staleBlobCount } = sanitizeLoadedReplacements(saved);
+            setStore({ version: 1, selectedBuildingId: null, replacements });
+            setStorageError(staleBlobWarning(staleBlobCount));
+          } else {
+            setStorageError(staleBlobWarning(localResult.staleBlobCount));
           }
         }
-        setStorageError(null);
       } catch (error) {
         if (cancelled) return;
-        // Fallback to local cache if DB is unreachable.
         try {
-          setStore(loadStoreFromLocalStorage());
+          const localResult = loadAndSanitizeStoreFromLocalStorage();
+          setStore(localResult.store);
+          const base =
+            error instanceof Error
+              ? error.message
+              : "Database unavailable; using local cache.";
+          const stale = staleBlobWarning(localResult.staleBlobCount);
+          setStorageError(stale ? `${base} Also reset stale blob: model URL(s).` : base);
         } catch {
-          /* empty */
+          setStorageError(
+            error instanceof Error
+              ? error.message
+              : "Database unavailable; using local cache.",
+          );
         }
-        setStorageError(
-          error instanceof Error
-            ? error.message
-            : "Database unavailable; using local cache.",
-        );
       } finally {
         if (!cancelled) {
           skipNextPersistRef.current = true;
@@ -99,14 +109,14 @@ export function useCustomBuildings() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [skipNextPersistRef]);
 
   useEffect(() => {
     if (!hydrated) return;
     try {
       saveStoreToLocalStorage(store);
     } catch {
-      /* ignore quota; DB is source of truth */
+      /* ignore quota */
     }
   }, [store, hydrated]);
 
@@ -116,28 +126,8 @@ export function useCustomBuildings() {
       skipNextPersistRef.current = false;
       return;
     }
-
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    const replacements = store.replacements;
-    saveTimerRef.current = setTimeout(() => {
-      void (async () => {
-        try {
-          await saveReplacementsToApi(replacements);
-          setStorageError(null);
-        } catch (error) {
-          setStorageError(
-            error instanceof Error
-              ? error.message
-              : "Failed to persist replacements to database.",
-          );
-        }
-      })();
-    }, SAVE_DEBOUNCE_MS);
-
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    };
-  }, [store.replacements, hydrated]);
+    schedulePersist(store.replacements);
+  }, [store.replacements, hydrated, schedulePersist, skipNextPersistRef]);
 
   const activeReplacement = useMemo(() => {
     if (!store.selectedBuildingId) return null;
@@ -162,27 +152,30 @@ export function useCustomBuildings() {
       altitude = DEFAULT_MODEL_ALTITUDE,
       modelLabel?: string,
     ) => {
+      const trimmed = modelUrl.trim();
+      if (!trimmed) throw new Error("Model URL is empty.");
+      if (trimmed.startsWith("blob:")) {
+        throw new Error(
+          "Uploaded model is not durable yet. Wait for upload to finish, or use a hosted URL.",
+        );
+      }
+
       const now = new Date().toISOString();
-      const existing = store.replacements.find(
+      const existing = storeRef.current.replacements.find(
         (r) => identityKey(r.buildingIdentity) === identityKey(building.identity),
       );
-
-      const resolvedUrl = resolveDurableModelUrl(modelUrl);
-      const label =
-        modelLabel?.trim() ||
-        (resolvedUrl.startsWith("blob:") || resolvedUrl.startsWith("data:")
-          ? "Uploaded GLB"
-          : resolvedUrl.includes("sample-building")
-            ? "Sample building"
-            : resolvedUrl.includes("office-building")
-              ? "Office building"
-              : "Custom GLB");
+      const resolvedUrl = resolveDurableModelUrl(trimmed);
+      if (resolvedUrl.startsWith("blob:")) {
+        throw new Error(
+          "Blob URLs cannot be saved. Upload the GLB so it is stored on the server.",
+        );
+      }
 
       const model: CustomBuildingModel = {
         id: existing?.id ?? createId(),
         buildingIdentity: building.identity,
         modelUrl: resolvedUrl,
-        modelLabel: label,
+        modelLabel: modelLabelFromUrl(resolvedUrl, modelLabel),
         longitude: building.centerLng,
         latitude: building.centerLat,
         altitude,
@@ -208,25 +201,22 @@ export function useCustomBuildings() {
       upsertReplacement(model);
       return model;
     },
-    [store.replacements, upsertReplacement],
+    [upsertReplacement],
   );
 
-  const updateActiveTransform = useCallback(
-    (patch: Partial<CustomBuildingModel>) => {
-      setStore((prev) => {
-        if (!prev.selectedBuildingId) return prev;
-        return {
-          ...prev,
-          replacements: prev.replacements.map((r) =>
-            r.id === prev.selectedBuildingId
-              ? { ...r, ...patch, updatedAt: new Date().toISOString() }
-              : r,
-          ),
-        };
-      });
-    },
-    [],
-  );
+  const updateActiveTransform = useCallback((patch: Partial<CustomBuildingModel>) => {
+    setStore((prev) => {
+      if (!prev.selectedBuildingId) return prev;
+      return {
+        ...prev,
+        replacements: prev.replacements.map((r) =>
+          r.id === prev.selectedBuildingId
+            ? { ...r, ...patch, updatedAt: new Date().toISOString() }
+            : r,
+        ),
+      };
+    });
+  }, []);
 
   const selectReplacement = useCallback((id: string | null) => {
     setStore((prev) => ({ ...prev, selectedBuildingId: id }));
@@ -239,10 +229,6 @@ export function useCustomBuildings() {
       replacements: prev.replacements.filter((r) => r.id !== id),
     }));
   }, []);
-
-  const restoreOriginal = useCallback((id: string) => {
-    removeReplacement(id);
-  }, [removeReplacement]);
 
   const resetActiveTransform = useCallback(() => {
     updateActiveTransform({
@@ -285,7 +271,6 @@ export function useCustomBuildings() {
     updateActiveTransform,
     selectReplacement,
     removeReplacement,
-    restoreOriginal,
     resetActiveTransform,
     exportJson,
     importJson,

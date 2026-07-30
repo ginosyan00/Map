@@ -1,5 +1,6 @@
 import type { CustomBuildingModel } from "@/types/building";
 import { isCustomBuildingModel } from "@/lib/storage/custom-buildings-storage";
+import { getClientWriteHeaders } from "@/lib/storage/write-headers";
 
 type ListResponse = {
   replacements: CustomBuildingModel[];
@@ -22,7 +23,10 @@ export async function saveReplacementsToApi(
 ): Promise<CustomBuildingModel[]> {
   const response = await fetch("/api/replacements", {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...getClientWriteHeaders(),
+    },
     body: JSON.stringify({ replacements }),
   });
   const data = (await response.json()) as ListResponse;

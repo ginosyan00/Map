@@ -19,7 +19,7 @@ import {
 import type { CustomBuildingModel } from "@/types/building";
 import { CUSTOM_LAYER_ID, degToRad, isDev } from "@/lib/map/constants";
 import { disposeThreeObject } from "@/lib/three/dispose-three-object";
-import { createProceduralBuilding, loadGlbModel } from "@/lib/three/load-glb-model";
+import { loadGlbModel } from "@/lib/three/load-glb-model";
 import { MercatorCoordinate } from "maplibre-gl";
 
 type ManagedModel = {
@@ -238,7 +238,7 @@ export class CustomBuildingLayer implements CustomLayerInterface {
     this.emitStatus();
 
     try {
-      const { root, fromProcedural } = await loadGlbModel(managed.config.modelUrl);
+      const { root, fromProcedural, warning } = await loadGlbModel(managed.config.modelUrl);
       if (!this.models.has(id)) {
         disposeThreeObject(root);
         return;
@@ -263,6 +263,7 @@ export class CustomBuildingLayer implements CustomLayerInterface {
       this.scene.add(root);
       managed.object = root;
       managed.loading = false;
+      managed.error = warning ?? null;
 
       if (isDev()) {
         console.log("[omt-glb-poc] GLB ready at", {
@@ -277,17 +278,10 @@ export class CustomBuildingLayer implements CustomLayerInterface {
       }
       this.map?.triggerRepaint();
     } catch (error) {
-      // Absolute last resort — never leave the replacement empty.
       managed.loading = false;
-      try {
-        const fallback = createProceduralBuilding();
-        this.scene.add(fallback);
-        managed.object = fallback;
-        managed.error = null;
-      } catch {
-        managed.error = error instanceof Error ? error.message : "Model load failed";
-      }
-      console.warn("[omt-glb-poc] ensureLoaded recovered with procedural model", error);
+      managed.object = null;
+      managed.error = error instanceof Error ? error.message : "Model load failed";
+      console.warn("[omt-glb-poc] ensureLoaded failed for", id, error);
     }
     this.emitStatus();
   }

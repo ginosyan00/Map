@@ -28,6 +28,13 @@ export async function GET(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Invalid bbox." }, { status: 400 });
   }
 
+  if (!(west < east && south < north)) {
+    return NextResponse.json(
+      { error: "Invalid bbox order (need west < east and south < north)." },
+      { status: 400 },
+    );
+  }
+
   // Guard against huge queries.
   if (east - west > 0.08 || north - south > 0.08) {
     return NextResponse.json({ error: "BBox too large." }, { status: 400 });

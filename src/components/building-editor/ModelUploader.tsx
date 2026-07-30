@@ -4,7 +4,6 @@ type Props = {
   onUpload: (file: File) => void;
   onUrlSubmit: (url: string) => void;
   onUseSample: () => void;
-  disabled?: boolean;
   status: "idle" | "loading" | "success" | "error";
   error: string | null;
   currentLabel?: string | null;
@@ -14,24 +13,25 @@ export function ModelUploader({
   onUpload,
   onUrlSubmit,
   onUseSample,
-  disabled,
   status,
   error,
   currentLabel,
 }: Props) {
+  const busy = status === "loading";
+
   return (
     <div className="stack">
       <div className="row wrap">
-        <button type="button" className="btn" disabled={disabled} onClick={onUseSample}>
+        <button type="button" className="btn" disabled={busy} onClick={onUseSample}>
           Use Sample Model
         </button>
-        <label className={`btn ${disabled ? "disabled" : ""}`}>
+        <label className={`btn ${busy ? "disabled" : ""}`}>
           Upload GLB
           <input
             type="file"
             accept=".glb,.gltf,model/gltf-binary,model/gltf+json"
             hidden
-            disabled={disabled}
+            disabled={busy}
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) onUpload(file);
@@ -55,9 +55,9 @@ export function ModelUploader({
           name="modelUrl"
           className="input grow"
           placeholder="https://…/model.glb"
-          disabled={disabled}
+          disabled={busy}
         />
-        <button type="submit" className="btn" disabled={disabled}>
+        <button type="submit" className="btn" disabled={busy}>
           Load URL
         </button>
       </form>

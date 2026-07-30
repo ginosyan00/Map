@@ -17,21 +17,38 @@ import {
 export type LoadModelResult = {
   root: Object3D<Object3DEventMap>;
   fromProcedural: boolean;
+  warning?: string;
 };
 
 const loader = new GLTFLoader();
 
+function isSampleModelUrl(url: string): boolean {
+  return (
+    url === SAMPLE_MODEL_URL ||
+    url === SAMPLE_MODEL_API_URL ||
+    url.endsWith("/sample-building.glb") ||
+    url === DEFAULT_APPLY_MODEL_URL
+  );
+}
+
+function isExplicitProcedural(url: string): boolean {
+  return url === PROCEDURAL_MODEL_URL || url.startsWith("procedural://");
+}
+
 /**
- * Keep live upload URLs (blob:/data:). Only rewrite empty / procedural / legacy paths.
+ * Keep live upload URLs (data: /api/models). Never rewrite user uploads to sample.
+ * Reject empty; rewrite legacy procedural aliases for sample path.
  */
 export function resolveDurableModelUrl(url: string): string {
   const trimmed = url.trim();
   if (!trimmed) return DEFAULT_APPLY_MODEL_URL;
-  // User uploads must never be rewritten to the sample model.
   if (trimmed.startsWith("blob:") || trimmed.startsWith("data:")) {
     return trimmed;
   }
-  if (trimmed.startsWith("procedural://") || trimmed === PROCEDURAL_MODEL_URL) {
+  if (trimmed.startsWith("/api/models/")) {
+    return trimmed;
+  }
+  if (isExplicitProcedural(trimmed)) {
     return DEFAULT_APPLY_MODEL_URL;
   }
   if (trimmed === "/api/sample-building") {
@@ -52,14 +69,14 @@ async function loadFromUrl(url: string): Promise<Object3D<Object3DEventMap>> {
 export async function loadGlbModel(url: string): Promise<LoadModelResult> {
   const resolved = resolveDurableModelUrl(url);
 
-  if (resolved === PROCEDURAL_MODEL_URL || resolved.startsWith("procedural://")) {
+  if (isExplicitProcedural(url.trim())) {
     return { root: createProceduralBuilding(), fromProcedural: true };
   }
 
-  const candidates =
-    resolved === SAMPLE_MODEL_URL || resolved.endsWith("/sample-building.glb")
-      ? [SAMPLE_MODEL_URL, SAMPLE_MODEL_API_URL]
-      : [resolved];
+  const allowProceduralFallback = isSampleModelUrl(resolved);
+  const candidates = allowProceduralFallback
+    ? [SAMPLE_MODEL_URL, SAMPLE_MODEL_API_URL]
+    : [resolved];
 
   let lastError: unknown;
   for (const candidate of candidates) {
@@ -72,16 +89,26 @@ export async function loadGlbModel(url: string): Promise<LoadModelResult> {
     }
   }
 
-  console.warn(
-    "[omt-glb-poc] All model URLs failed, using procedural building:",
-    resolved,
-    lastError,
-  );
-  return { root: createProceduralBuilding(), fromProcedural: true };
+  if (allowProceduralFallback) {
+    console.warn(
+      "[omt-glb-poc] Sample model URLs failed, using procedural building:",
+      resolved,
+      lastError,
+    );
+    return {
+      root: createProceduralBuilding(),
+      fromProcedural: true,
+      warning: "Sample GLB failed to load; showing procedural placeholder.",
+    };
+  }
+
+  const message =
+    lastError instanceof Error ? lastError.message : "Failed to load GLB model.";
+  throw new Error(message);
 }
 
 /**
- * Neutral procedural fallback (only if every GLB URL fails).
+ * Neutral procedural fallback (explicit procedural:// or sample last resort).
  */
 export function createProceduralBuilding(): Group {
   const group = new Group();

@@ -26,7 +26,6 @@ type Props = {
   onUrl: (url: string) => void;
   onApply: () => void;
   onRemoveCustom: () => void;
-  onRestoreOriginal: () => void;
   onResetTransform: () => void;
   onTransformChange: (patch: Partial<CustomBuildingModel>) => void;
   onSelectReplacement: (id: string) => void;
@@ -44,7 +43,10 @@ export function BuildingEditorPanel(props: Props) {
     replacements,
     hideWarning,
     panelError,
+    layerStatus,
   } = props;
+
+  const layerErrors = layerStatus ? Object.values(layerStatus.errors) : [];
 
   return (
     <aside className="editor">
@@ -55,11 +57,24 @@ export function BuildingEditorPanel(props: Props) {
         </button>
       </header>
 
+      <p className="muted small">
+        1) Select a building on the map → 2) Choose or upload a GLB → 3) Replace
+      </p>
+
       {panelError ? <p className="error">{panelError}</p> : null}
+      {layerErrors.length > 0 ? (
+        <p className="error">Model load error: {layerErrors[0]}</p>
+      ) : null}
 
       <section className="section">
         <h3>1. Selected Building</h3>
         <SelectedBuildingInfo building={selected} />
+        {selected && !selected.canFilterHide ? (
+          <p className="warning">
+            This building has no stable filter id. The original extrusion may still show under
+            your GLB (double-draw). Prefer tiles with <code>osm_id</code>.
+          </p>
+        ) : null}
       </section>
 
       <section className="section">
@@ -86,7 +101,7 @@ export function BuildingEditorPanel(props: Props) {
             </div>
           </dl>
         ) : (
-          <p className="muted">No selection.</p>
+          <p className="muted">No selection — click a building on the map.</p>
         )}
         <p className="muted small warn-text">
           Feature IDs may change across zoom levels or tileset rebuilds. Prefer stable{" "}
@@ -103,7 +118,7 @@ export function BuildingEditorPanel(props: Props) {
           </p>
         ) : (
           <p className="muted">
-            Select a building, then press <strong>Replace selected building</strong>.
+            Select a building, prepare a model below, then press <strong>Replace selected building</strong>.
           </p>
         )}
       </section>
@@ -111,7 +126,6 @@ export function BuildingEditorPanel(props: Props) {
       <section className="section">
         <h3>4. 3D Model</h3>
         <ModelUploader
-          disabled={!selected}
           status={props.modelStatus}
           error={props.modelError}
           currentLabel={props.modelLabel}
@@ -129,15 +143,7 @@ export function BuildingEditorPanel(props: Props) {
             disabled={!activeReplacement}
             onClick={props.onRemoveCustom}
           >
-            Remove Custom Model
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={!activeReplacement}
-            onClick={props.onRestoreOriginal}
-          >
-            Restore Original Building
+            Remove replacement
           </button>
         </div>
       </section>

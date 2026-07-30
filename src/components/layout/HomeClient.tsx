@@ -53,14 +53,18 @@ export function HomeClient() {
     modelLoader.setUrl(DEFAULT_APPLY_MODEL_URL, "Sample building (GLB)");
     setPanelError(null);
     if (selected) {
-      const model = buildings.applyReplacement(
-        selected,
-        DEFAULT_APPLY_MODEL_URL,
-        0,
-        "Sample building (GLB)",
-      );
-      setFocusTarget({ lng: model.longitude, lat: model.latitude });
-      clearSelection();
+      try {
+        const model = buildings.applyReplacement(
+          selected,
+          DEFAULT_APPLY_MODEL_URL,
+          0,
+          "Sample building (GLB)",
+        );
+        setFocusTarget({ lng: model.longitude, lat: model.latitude });
+        clearSelection();
+      } catch (error) {
+        setPanelError(error instanceof Error ? error.message : "Failed to apply sample model.");
+      }
     }
   }, [modelLoader, selected, buildings, clearSelection]);
 
@@ -82,24 +86,32 @@ export function HomeClient() {
 
   const onApply = useCallback(() => {
     if (!selected) {
-      setPanelError("Նախ սեղմիր քարտեզի վրա մի շենք (կապույտ highlight)։");
+      setPanelError("Select a building on the map first (blue highlight).");
+      return;
+    }
+    if (modelLoader.state === "loading") {
+      setPanelError("Model is still uploading. Wait until status is success.");
       return;
     }
     const url = modelLoader.source?.url;
     if (!url) {
-      setPanelError("Նախ upload արա GLB ֆայլ կամ սեղմիր Use sample։");
+      setPanelError("Upload a GLB file or press Use Sample Model first.");
       return;
     }
-    const model = buildings.applyReplacement(
-      selected,
-      url,
-      0,
-      modelLoader.source?.label,
-    );
-    setPanelError(null);
-    setFocusTarget({ lng: model.longitude, lat: model.latitude });
-    clearSelection();
-  }, [selected, modelLoader.source, buildings, clearSelection]);
+    try {
+      const model = buildings.applyReplacement(
+        selected,
+        url,
+        0,
+        modelLoader.source?.label,
+      );
+      setPanelError(null);
+      setFocusTarget({ lng: model.longitude, lat: model.latitude });
+      clearSelection();
+    } catch (error) {
+      setPanelError(error instanceof Error ? error.message : "Failed to apply replacement.");
+    }
+  }, [selected, modelLoader.state, modelLoader.source, buildings, clearSelection]);
 
   const onImportFile = useCallback(
     async (file: File) => {
@@ -128,7 +140,8 @@ export function HomeClient() {
         <div>
           <h1>OpenMapTiles → Custom GLB POC</h1>
           <p className="muted">
-            MapLibre 3D map: select a building and replace it with a custom GLB model.
+            Select a building, choose a GLB, then replace it. Uploads are stored on the server and
+            survive refresh.
           </p>
         </div>
         <div className={`pill status-${headerStatus.replace(/\s+/g, "-")}`}>{headerStatus}</div>
@@ -177,11 +190,6 @@ export function HomeClient() {
           onRemoveCustom={() => {
             if (buildings.activeReplacement) {
               buildings.removeReplacement(buildings.activeReplacement.id);
-            }
-          }}
-          onRestoreOriginal={() => {
-            if (buildings.activeReplacement) {
-              buildings.restoreOriginal(buildings.activeReplacement.id);
             }
           }}
           onResetTransform={buildings.resetActiveTransform}

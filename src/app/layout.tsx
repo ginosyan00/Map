@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
+import { Sora, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
-const sans = IBM_Plex_Sans({
+const sans = Sora({
   variable: "--font-sans",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
@@ -15,9 +15,9 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OpenMapTiles Custom GLB POC",
+  title: "Manvel Map — Building Replacer",
   description:
-    "Proof of concept: replace OpenMapTiles extruded buildings with custom GLB models via MapLibre + Three.js",
+    "Replace OpenMapTiles extruded buildings with custom GLB models on a MapLibre 3D map.",
 };
 
 export default function RootLayout({

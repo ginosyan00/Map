@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertWriteAuthorized } from "@/lib/api/write-auth";
 import { MAX_GLB_BYTES } from "@/lib/map/constants";
-import { saveModelUpload } from "@/lib/storage/model-uploads";
+import { listModelUploads, saveModelUpload } from "@/lib/storage/model-uploads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +12,17 @@ const ALLOWED_TYPES = new Set([
   "application/octet-stream",
   "",
 ]);
+
+/** List uploaded GLB assets for management / integration. */
+export async function GET(): Promise<Response> {
+  try {
+    const models = await listModelUploads();
+    return NextResponse.json({ models, count: models.length });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to list models.";
+    return NextResponse.json({ error: message, models: [] }, { status: 500 });
+  }
+}
 
 export async function POST(request: Request): Promise<Response> {
   const unauthorized = assertWriteAuthorized(request);

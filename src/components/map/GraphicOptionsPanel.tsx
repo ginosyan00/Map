@@ -37,7 +37,7 @@ export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
           aria-expanded={false}
           aria-label="Open graphic options"
         >
-          Graphics
+          Look &amp; feel
         </button>
       </div>
     );
@@ -46,7 +46,7 @@ export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
   return (
     <aside className="graphic-options" aria-label="Graphic options">
       <header className="graphic-options-header">
-        <h2>Graphic options</h2>
+        <h2>Look &amp; feel</h2>
         <div className="graphic-options-actions">
           <button type="button" className="btn tiny ghost" onClick={onResetView}>
             Reset view
@@ -63,14 +63,14 @@ export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
       </header>
 
       <section className="graphic-section">
-        <h3>Ground elevations</h3>
+        <h3>Terrain</h3>
         <label className="graphic-toggle">
           <input
             type="checkbox"
             checked={options.groundElevations}
             onChange={(e) => onChange({ groundElevations: e.target.checked })}
           />
-          Enable terrain
+          Ground elevations
         </label>
         <label className="graphic-range">
           Exaggeration
@@ -120,7 +120,7 @@ export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
       </section>
 
       <section className="graphic-section">
-        <h3>Display</h3>
+        <h3>Layers</h3>
         <label className="graphic-toggle">
           <input
             type="checkbox"
@@ -143,7 +143,7 @@ export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
             checked={options.showSky}
             onChange={(e) => onChange({ showSky: e.target.checked })}
           />
-          Sky / atmosphere
+          Sky
         </label>
         <label className="graphic-toggle">
           <input
@@ -151,7 +151,7 @@ export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
             checked={options.showVehicles}
             onChange={(e) => onChange({ showVehicles: e.target.checked })}
           />
-          Vehicles (3D GLB)
+          Vehicles
         </label>
         <label className="graphic-toggle">
           <input
@@ -159,7 +159,7 @@ export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
             checked={options.showVegetation}
             onChange={(e) => onChange({ showVegetation: e.target.checked })}
           />
-          Park trees (3D)
+          Trees
         </label>
         <label className="graphic-toggle">
           <input
@@ -167,7 +167,7 @@ export function GraphicOptionsPanel({ options, onChange, onResetView }: Props) {
             checked={options.idleOrbit}
             onChange={(e) => onChange({ idleOrbit: e.target.checked })}
           />
-          Idle orbit animation
+          Idle orbit
         </label>
       </section>
     </aside>

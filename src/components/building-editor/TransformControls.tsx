@@ -1,17 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import type { CustomBuildingModel } from "@/types/building";
 
 type FieldKey = keyof Pick<
   CustomBuildingModel,
-  | "longitude"
-  | "latitude"
-  | "altitude"
-  | "rotationX"
-  | "rotationY"
-  | "rotationZ"
-  | "scale"
-  | "minZoom"
+  "altitude" | "rotationY" | "scale" | "rotationX" | "rotationZ" | "minZoom" | "longitude" | "latitude"
 >;
 
 type FieldDef = {
@@ -20,18 +14,20 @@ type FieldDef = {
   min: number;
   max: number;
   step: number;
-  slider?: boolean;
 };
 
-const FIELDS: FieldDef[] = [
+const PRIMARY: FieldDef[] = [
+  { key: "altitude", label: "Height offset", min: -50, max: 500, step: 0.5 },
+  { key: "rotationY", label: "Turn", min: -180, max: 180, step: 1 },
+  { key: "scale", label: "Scale", min: 0.05, max: 20, step: 0.05 },
+];
+
+const MORE: FieldDef[] = [
+  { key: "rotationX", label: "Tilt X", min: -180, max: 180, step: 1 },
+  { key: "rotationZ", label: "Tilt Z", min: -180, max: 180, step: 1 },
   { key: "longitude", label: "Longitude", min: -180, max: 180, step: 0.000001 },
   { key: "latitude", label: "Latitude", min: -90, max: 90, step: 0.000001 },
-  { key: "altitude", label: "Altitude (m)", min: -50, max: 500, step: 0.5, slider: true },
-  { key: "rotationX", label: "Rotation X (°)", min: -180, max: 180, step: 1, slider: true },
-  { key: "rotationY", label: "Rotation Y (°)", min: -180, max: 180, step: 1, slider: true },
-  { key: "rotationZ", label: "Rotation Z (°)", min: -180, max: 180, step: 1, slider: true },
-  { key: "scale", label: "Uniform scale", min: 0.05, max: 20, step: 0.05, slider: true },
-  { key: "minZoom", label: "Minimum zoom", min: 0, max: 22, step: 0.5, slider: true },
+  { key: "minZoom", label: "Min zoom", min: 0, max: 22, step: 0.5 },
 ];
 
 type Props = {
@@ -40,75 +36,64 @@ type Props = {
   onReset: () => void;
 };
 
+function Field({
+  field,
+  model,
+  onChange,
+}: {
+  field: FieldDef;
+  model: CustomBuildingModel;
+  onChange: (patch: Partial<CustomBuildingModel>) => void;
+}) {
+  const value = model[field.key];
+  return (
+    <label className="field">
+      <div className="field-label">
+        <span>{field.label}</span>
+        <span className="field-value">{Number(value).toFixed(field.step < 0.01 ? 5 : 2)}</span>
+      </div>
+      <input
+        type="range"
+        min={field.min}
+        max={field.max}
+        step={field.step}
+        value={value}
+        onChange={(event) => onChange({ [field.key]: Number(event.target.value) })}
+      />
+    </label>
+  );
+}
+
 export function TransformControls({ model, onChange, onReset }: Props) {
+  const [moreOpen, setMoreOpen] = useState(false);
+
   return (
     <div className="stack">
-      {FIELDS.map((field) => {
-        const value = model[field.key];
-        return (
-          <label key={field.key} className="field">
-            <div className="field-label">
-              <span>{field.label}</span>
-              <button
-                type="button"
-                className="btn tiny ghost"
-                onClick={() => {
-                  const defaults: Partial<CustomBuildingModel> = {
-                    altitude: 0,
-                    rotationX: 90,
-                    rotationY: 0,
-                    rotationZ: 0,
-                    scale: 1,
-                    minZoom: 14,
-                    longitude: model.longitude,
-                    latitude: model.latitude,
-                  };
-                  onChange({ [field.key]: defaults[field.key] });
-                }}
-              >
-                Reset
-              </button>
-            </div>
-            <div className="row">
-              <input
-                className="input"
-                type="number"
-                min={field.min}
-                max={field.max}
-                step={field.step}
-                value={value}
-                onChange={(event) =>
-                  onChange({ [field.key]: Number(event.target.value) })
-                }
-              />
-            </div>
-            {field.slider ? (
-              <input
-                type="range"
-                min={field.min}
-                max={field.max}
-                step={field.step}
-                value={value}
-                onChange={(event) =>
-                  onChange({ [field.key]: Number(event.target.value) })
-                }
-              />
-            ) : null}
-          </label>
-        );
-      })}
+      {PRIMARY.map((field) => (
+        <Field key={field.key} field={field} model={model} onChange={onChange} />
+      ))}
 
-      <label className="row gap">
+      <button type="button" className="btn tiny ghost" onClick={() => setMoreOpen((v) => !v)}>
+        {moreOpen ? "Fewer controls" : "More controls"}
+      </button>
+
+      {moreOpen
+        ? MORE.map((field) => (
+            <Field key={field.key} field={field} model={model} onChange={onChange} />
+          ))
+        : null}
+
+      <label className="graphic-toggle">
         <input
           type="checkbox"
           checked={model.visible}
           onChange={(event) => onChange({ visible: event.target.checked })}
         />
-        <span>Show custom model</span>
+        Show on map
       </label>
 
-      <button type="button" className="btn" onClick={onReset}>
-        Reset Transform
+      <button type="button" className="btn ghost" onClick={onReset}>
+        Reset transform
       </button>
     </div>
   );

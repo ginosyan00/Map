@@ -77,6 +77,14 @@ type Props = {
   focusTarget: { lng: number; lat: number } | null;
   /** Bump to trigger cinematic reset to default camera. */
   resetViewTick?: number;
+  /** Optional camera from share URL (?lng&lat&z…). */
+  initialCamera?: {
+    lng: number;
+    lat: number;
+    zoom: number;
+    pitch: number;
+    bearing: number;
+  } | null;
 };
 
 export function MapView(props: Props) {
@@ -235,10 +243,12 @@ export function MapView(props: Props) {
         const map = new maplibregl.Map({
           container: containerRef.current,
           style,
-          center: env.center,
-          zoom: env.zoom,
-          pitch: env.pitch,
-          bearing: env.bearing,
+          center: propsRef.current.initialCamera
+            ? [propsRef.current.initialCamera.lng, propsRef.current.initialCamera.lat]
+            : env.center,
+          zoom: propsRef.current.initialCamera?.zoom ?? env.zoom,
+          pitch: propsRef.current.initialCamera?.pitch ?? env.pitch,
+          bearing: propsRef.current.initialCamera?.bearing ?? env.bearing,
           maxPitch: 85,
           pitchWithRotate: true,
           dragRotate: true,

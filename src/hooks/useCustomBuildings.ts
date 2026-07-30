@@ -243,6 +243,14 @@ export function useCustomBuildings() {
     }));
   }, []);
 
+  const clearAllReplacements = useCallback(() => {
+    setStore((prev) => ({
+      ...prev,
+      selectedBuildingId: null,
+      replacements: [],
+    }));
+  }, []);
+
   const resetActiveTransform = useCallback(() => {
     updateActiveTransform({
       altitude: DEFAULT_MODEL_ALTITUDE,
@@ -285,6 +293,7 @@ export function useCustomBuildings() {
     patchReplacement,
     selectReplacement,
     removeReplacement,
+    clearAllReplacements,
     resetActiveTransform,
     exportJson,
     importJson,

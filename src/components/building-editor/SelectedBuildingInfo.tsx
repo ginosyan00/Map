@@ -1,41 +1,61 @@
 "use client";
 
+import { useState } from "react";
 import type { SelectedBuilding } from "@/types/building";
+import { identityKey } from "@/lib/map/building-identification";
 
 type Props = {
   building: SelectedBuilding | null;
 };
 
 export function SelectedBuildingInfo({ building }: Props) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
   if (!building) {
     return (
-      <p className="muted">
-        Click a 3D building on the map to inspect its OpenMapTiles properties.
-      </p>
+      <div className="empty-select">
+        <p className="empty-select-title">No building selected</p>
+        <p className="muted small">Click any extruded building on the map to start.</p>
+      </div>
     );
   }
 
-  const rows: Array<[string, string]> = [
-    ["Feature ID", building.featureId !== undefined ? String(building.featureId) : "—"],
-    ["OSM ID", building.osmId ?? "—"],
-    ["Name", building.name ?? "—"],
-    ["Building type", building.buildingType ?? "—"],
-    ["Height", building.height !== null ? String(building.height) : "—"],
-    ["Minimum height", building.minHeight !== null ? String(building.minHeight) : "—"],
-    ["Source", building.source],
-    ["Source layer", building.sourceLayer ?? "—"],
-    ["Center longitude", building.centerLng.toFixed(6)],
-    ["Center latitude", building.centerLat.toFixed(6)],
-  ];
+  const title = building.name ?? building.buildingType ?? "Selected building";
 
   return (
-    <dl className="info-grid">
-      {rows.map(([label, value]) => (
-        <div key={label} className="info-row">
-          <dt>{label}</dt>
-          <dd title={value}>{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <div className="stack tight">
+      <div className="select-card">
+        <strong>{title}</strong>
+        <span className="muted small">
+          {building.height !== null ? `${building.height} m high` : "Height unknown"}
+          {building.osmId ? ` · OSM ${building.osmId}` : ""}
+        </span>
+      </div>
+      <button
+        type="button"
+        className="btn tiny ghost"
+        onClick={() => setDetailsOpen((v) => !v)}
+      >
+        {detailsOpen ? "Hide details" : "Show details"}
+      </button>
+      {detailsOpen ? (
+        <dl className="info-grid">
+          <div className="info-row">
+            <dt>Identity</dt>
+            <dd title={identityKey(building.identity)}>{building.identity.type}</dd>
+          </div>
+          <div className="info-row">
+            <dt>Filter</dt>
+            <dd>{building.filterStrategy}</dd>
+          </div>
+          <div className="info-row">
+            <dt>Center</dt>
+            <dd>
+              {building.centerLng.toFixed(5)}, {building.centerLat.toFixed(5)}
+            </dd>
+          </div>
+        </dl>
+      ) : null}
+    </div>
   );
 }

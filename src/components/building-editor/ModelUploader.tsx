@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 type Props = {
   onUpload: (file: File) => void;
   onUrlSubmit: (url: string) => void;
@@ -18,15 +20,14 @@ export function ModelUploader({
   currentLabel,
 }: Props) {
   const busy = status === "loading";
+  const [urlOpen, setUrlOpen] = useState(false);
 
   return (
     <div className="stack">
-      <div className="row wrap">
-        <button type="button" className="btn" disabled={busy} onClick={onUseSample}>
-          Use Sample Model
-        </button>
-        <label className={`btn ${busy ? "disabled" : ""}`}>
-          Upload GLB
+      <div className="model-actions">
+        <label className={`upload-tile ${busy ? "disabled" : ""}`}>
+          <span className="upload-tile-title">Upload GLB</span>
+          <span className="muted small">From your computer</span>
           <input
             type="file"
             accept=".glb,model/gltf-binary"
@@ -39,32 +40,52 @@ export function ModelUploader({
             }}
           />
         </label>
+        <button
+          type="button"
+          className="upload-tile ghost-tile"
+          disabled={busy}
+          onClick={onUseSample}
+        >
+          <span className="upload-tile-title">Use sample</span>
+          <span className="muted small">Quick demo box</span>
+        </button>
       </div>
 
-      <form
-        className="row"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const form = event.currentTarget;
-          const data = new FormData(form);
-          const url = String(data.get("modelUrl") ?? "");
-          onUrlSubmit(url);
-        }}
+      <button
+        type="button"
+        className="btn tiny ghost"
+        disabled={busy}
+        onClick={() => setUrlOpen((v) => !v)}
       >
-        <input
-          name="modelUrl"
-          className="input grow"
-          placeholder="https://…/model.glb"
-          disabled={busy}
-        />
-        <button type="submit" className="btn" disabled={busy}>
-          Load URL
-        </button>
-      </form>
+        {urlOpen ? "Hide URL input" : "Or load from URL"}
+      </button>
 
-      <p className="muted small">
-        Status: <strong>{status}</strong>
-        {currentLabel ? ` · ${currentLabel}` : ""}
+      {urlOpen ? (
+        <form
+          className="row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const data = new FormData(form);
+            const url = String(data.get("modelUrl") ?? "");
+            onUrlSubmit(url);
+          }}
+        >
+          <input
+            name="modelUrl"
+            className="input grow"
+            placeholder="https://…/model.glb"
+            disabled={busy}
+          />
+          <button type="submit" className="btn" disabled={busy}>
+            Load
+          </button>
+        </form>
+      ) : null}
+
+      <p className={`model-status status-${status}`}>
+        {busy ? "Uploading…" : status === "success" ? "Ready" : status === "error" ? "Failed" : "No model yet"}
+        {currentLabel && status === "success" ? ` · ${currentLabel}` : ""}
       </p>
       {error ? <p className="error">{error}</p> : null}
     </div>

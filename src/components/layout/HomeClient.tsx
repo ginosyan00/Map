@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { BuildingEditorPanel } from "@/components/building-editor/BuildingEditorPanel";
 import { MapView } from "@/components/map/MapView";
 import { GraphicOptionsPanel } from "@/components/map/GraphicOptionsPanel";
 import type { CustomLayerStatus } from "@/components/map/CustomBuildingLayer";
+import { useAppShareState } from "@/hooks/useAppShareState";
 import { useCustomBuildings } from "@/hooks/useCustomBuildings";
+import { useEditorHotkeys } from "@/hooks/useEditorHotkeys";
 import { useGraphicOptions } from "@/hooks/useGraphicOptions";
 import { useModelLoader } from "@/hooks/useModelLoader";
 import { useSelectedBuilding } from "@/hooks/useSelectedBuilding";
@@ -28,6 +30,7 @@ const EMPTY_DEBUG: MapDebugSnapshot = {
 };
 
 export function HomeClient() {
+  const share = useAppShareState();
   const { selected, selectBuilding, clearSelection } = useSelectedBuilding();
   const buildings = useCustomBuildings();
   const modelLoader = useModelLoader();
@@ -41,8 +44,10 @@ export function HomeClient() {
   const [layerStatus, setLayerStatus] = useState<CustomLayerStatus | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number } | null>(null);
   const [resetViewTick, setResetViewTick] = useState(0);
+  const [focusApplied, setFocusApplied] = useState(false);
 
   const pendingModelUrl = modelLoader.source?.url ?? DEFAULT_APPLY_MODEL_URL;
+  const embed = share.embed;
 
   const headerStatus = useMemo(() => {
     if (mapError) return "error";
@@ -50,6 +55,32 @@ export function HomeClient() {
     if (selected) return "building selected";
     return "ready";
   }, [mapError, buildings.hydrated, selected]);
+
+  const camera = useMemo(
+    () =>
+      debug.center[0] !== 0 || debug.center[1] !== 0
+        ? {
+            lng: debug.center[0],
+            lat: debug.center[1],
+            zoom: debug.zoom,
+            pitch: debug.pitch,
+            bearing: debug.bearing,
+          }
+        : share.camera,
+    [debug, share.camera],
+  );
+
+  useEffect(() => {
+    if (!buildings.hydrated || focusApplied || !share.focusId) return;
+    const item = buildings.store.replacements.find((r) => r.id === share.focusId);
+    if (!item) {
+      setFocusApplied(true);
+      return;
+    }
+    buildings.selectReplacement(item.id);
+    setFocusTarget({ lng: item.longitude, lat: item.latitude });
+    setFocusApplied(true);
+  }, [buildings, share.focusId, focusApplied]);
 
   const onMapSelect = useCallback(
     (building: SelectedBuilding) => {
@@ -152,18 +183,33 @@ export function HomeClient() {
     setResetViewTick((n) => n + 1);
   }, []);
 
+  const onRemoveActive = useCallback(() => {
+    if (buildings.activeReplacement) {
+      buildings.removeReplacement(buildings.activeReplacement.id);
+    }
+  }, [buildings]);
+
+  useEditorHotkeys({
+    enabled: !embed,
+    onReplace: onApply,
+    onClearSelection: clearSelection,
+    onRemoveActive,
+  });
+
   return (
-    <div className="app">
-      <header className="app-header">
-        <div>
-          <h1>OpenMapTiles → Custom GLB POC</h1>
-          <p className="muted">
-            Select a building, choose a GLB, then replace it. Uploads are stored on the server and
-            survive refresh.
-          </p>
-        </div>
-        <div className={`pill status-${headerStatus.replace(/\s+/g, "-")}`}>{headerStatus}</div>
-      </header>
+    <div className={`app ${embed ? "embed" : ""}`}>
+      {!embed ? (
+        <header className="app-header">
+          <div>
+            <p className="brand">Manvel Map</p>
+            <h1>Building replacer</h1>
+            <p className="muted">
+              Click a building, pick a GLB, replace it. Share or embed via Manage &amp; integrate.
+            </p>
+          </div>
+          <div className={`pill status-${headerStatus.replace(/\s+/g, "-")}`}>{headerStatus}</div>
+        </header>
+      ) : null}
 
       <div className="workspace">
         <div className="map-column">
@@ -174,6 +220,7 @@ export function HomeClient() {
             atmosphereInput={graphic.atmosphereInput}
             focusTarget={focusTarget}
             resetViewTick={resetViewTick}
+            initialCamera={share.camera}
             onSelect={onMapSelect}
             onEmptyClick={onEmptyClick}
             onHideWarning={setHideWarning}
@@ -181,51 +228,53 @@ export function HomeClient() {
             onLayerStatus={setLayerStatus}
             onDebug={setDebug}
           />
-          <GraphicOptionsPanel
-            options={graphic.options}
-            onChange={graphic.patch}
-            onResetView={onResetDefaultView}
-          />
+          {!embed ? (
+            <GraphicOptionsPanel
+              options={graphic.options}
+              onChange={graphic.patch}
+              onResetView={onResetDefaultView}
+            />
+          ) : null}
         </div>
 
-        <BuildingEditorPanel
-          selected={selected}
-          activeReplacement={buildings.activeReplacement}
-          replacements={buildings.store.replacements}
-          modelStatus={modelLoader.state}
-          modelError={modelLoader.error}
-          modelLabel={modelLoader.source?.label ?? pendingModelUrl}
-          hideWarning={hideWarning}
-          panelError={panelError ?? mapError ?? buildings.storageError}
-          debugOpen={debugOpen}
-          debug={debug}
-          layerStatus={layerStatus}
-          onToggleDebug={() => setDebugOpen((v) => !v)}
-          onUseSample={onUseSample}
-          onUpload={onUpload}
-          onUrl={onUrl}
-          onApply={onApply}
-          onRemoveCustom={() => {
-            if (buildings.activeReplacement) {
-              buildings.removeReplacement(buildings.activeReplacement.id);
-            }
-          }}
-          onResetTransform={buildings.resetActiveTransform}
-          onTransformChange={buildings.updateActiveTransform}
-          onSelectReplacement={buildings.selectReplacement}
-          onDeleteReplacement={buildings.removeReplacement}
-          onToggleReplacementVisible={(id, visible) => {
-            buildings.patchReplacement(id, { visible });
-          }}
-          onFocusReplacement={(id) => {
-            const item = buildings.store.replacements.find((r) => r.id === id);
-            if (!item) return;
-            buildings.selectReplacement(id);
-            setFocusTarget({ lng: item.longitude, lat: item.latitude });
-          }}
-          onExport={buildings.exportJson}
-          onImportFile={onImportFile}
-        />
+        {!embed ? (
+          <BuildingEditorPanel
+            selected={selected}
+            activeReplacement={buildings.activeReplacement}
+            replacements={buildings.store.replacements}
+            modelStatus={modelLoader.state}
+            modelError={modelLoader.error}
+            modelLabel={modelLoader.source?.label ?? pendingModelUrl}
+            hideWarning={hideWarning}
+            panelError={panelError ?? mapError ?? buildings.storageError}
+            debugOpen={debugOpen}
+            debug={debug}
+            layerStatus={layerStatus}
+            camera={camera}
+            onToggleDebug={() => setDebugOpen((v) => !v)}
+            onUseSample={onUseSample}
+            onUpload={onUpload}
+            onUrl={onUrl}
+            onApply={onApply}
+            onRemoveCustom={onRemoveActive}
+            onResetTransform={buildings.resetActiveTransform}
+            onTransformChange={buildings.updateActiveTransform}
+            onSelectReplacement={buildings.selectReplacement}
+            onDeleteReplacement={buildings.removeReplacement}
+            onToggleReplacementVisible={(id, visible) => {
+              buildings.patchReplacement(id, { visible });
+            }}
+            onFocusReplacement={(id) => {
+              const item = buildings.store.replacements.find((r) => r.id === id);
+              if (!item) return;
+              buildings.selectReplacement(id);
+              setFocusTarget({ lng: item.longitude, lat: item.latitude });
+            }}
+            onExport={buildings.exportJson}
+            onImportFile={onImportFile}
+            onClearAll={buildings.clearAllReplacements}
+          />
+        ) : null}
       </div>
     </div>
   );

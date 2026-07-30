@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ConfigExport,
   CustomBuildingModel,
@@ -24,7 +24,13 @@ import {
   saveStoreToLocalStorage,
   validateConfigExport,
 } from "@/lib/storage/custom-buildings-storage";
+import {
+  fetchReplacementsFromApi,
+  saveReplacementsToApi,
+} from "@/lib/storage/replacements-api";
 import { resolveDurableModelUrl } from "@/lib/three/load-glb-model";
+
+const SAVE_DEBOUNCE_MS = 600;
 
 function createId(): string {
   return `custom-building-${crypto.randomUUID()}`;
@@ -38,26 +44,100 @@ export function useCustomBuildings() {
   });
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const skipNextPersistRef = useRef(true);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    try {
-      setStore(loadStoreFromLocalStorage());
-    } catch {
-      setStorageError("localStorage data was invalid and was reset.");
-    } finally {
-      setHydrated(true);
-    }
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const fromDb = await fetchReplacementsFromApi();
+        if (cancelled) return;
+
+        if (fromDb.length > 0) {
+          setStore({
+            version: 1,
+            selectedBuildingId: null,
+            replacements: fromDb,
+          });
+        } else {
+          // First-time: migrate any existing localStorage data into Neon.
+          const local = loadStoreFromLocalStorage();
+          if (local.replacements.length > 0) {
+            const saved = await saveReplacementsToApi(local.replacements);
+            if (cancelled) return;
+            setStore({
+              version: 1,
+              selectedBuildingId: null,
+              replacements: saved,
+            });
+          }
+        }
+        setStorageError(null);
+      } catch (error) {
+        if (cancelled) return;
+        // Fallback to local cache if DB is unreachable.
+        try {
+          setStore(loadStoreFromLocalStorage());
+        } catch {
+          /* empty */
+        }
+        setStorageError(
+          error instanceof Error
+            ? error.message
+            : "Database unavailable; using local cache.",
+        );
+      } finally {
+        if (!cancelled) {
+          skipNextPersistRef.current = true;
+          setHydrated(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
     try {
       saveStoreToLocalStorage(store);
-      setStorageError(null);
     } catch {
-      setStorageError("Failed to persist replacements to localStorage.");
+      /* ignore quota; DB is source of truth */
     }
   }, [store, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    const replacements = store.replacements;
+    saveTimerRef.current = setTimeout(() => {
+      void (async () => {
+        try {
+          await saveReplacementsToApi(replacements);
+          setStorageError(null);
+        } catch (error) {
+          setStorageError(
+            error instanceof Error
+              ? error.message
+              : "Failed to persist replacements to database.",
+          );
+        }
+      })();
+    }, SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [store.replacements, hydrated]);
 
   const activeReplacement = useMemo(() => {
     if (!store.selectedBuildingId) return null;
@@ -103,7 +183,6 @@ export function useCustomBuildings() {
         buildingIdentity: building.identity,
         modelUrl: resolvedUrl,
         modelLabel: label,
-        // Keep the selected footprint center — never drift toward a neighbor.
         longitude: building.centerLng,
         latitude: building.centerLat,
         altitude,

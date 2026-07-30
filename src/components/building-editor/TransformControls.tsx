@@ -36,6 +36,16 @@ type Props = {
   onReset: () => void;
 };
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function roundToStep(value: number, step: number): number {
+  const decimals = String(step).includes(".") ? String(step).split(".")[1]?.length ?? 0 : 0;
+  const rounded = Math.round(value / step) * step;
+  return Number(rounded.toFixed(decimals));
+}
+
 function Field({
   field,
   model,
@@ -45,12 +55,39 @@ function Field({
   model: CustomBuildingModel;
   onChange: (patch: Partial<CustomBuildingModel>) => void;
 }) {
-  const value = model[field.key];
+  const value = Number(model[field.key]);
+  const decimals = field.step < 0.01 ? 5 : 2;
+
+  const nudge = (direction: -1 | 1) => {
+    const next = roundToStep(value + direction * field.step, field.step);
+    onChange({ [field.key]: clamp(next, field.min, field.max) });
+  };
+
   return (
-    <label className="field">
+    <div className="field">
       <div className="field-label">
         <span>{field.label}</span>
-        <span className="field-value">{Number(value).toFixed(field.step < 0.01 ? 5 : 2)}</span>
+        <div className="field-stepper">
+          <button
+            type="button"
+            className="stepper-btn"
+            aria-label={`Decrease ${field.label}`}
+            disabled={value <= field.min}
+            onClick={() => nudge(-1)}
+          >
+            −
+          </button>
+          <span className="field-value">{value.toFixed(decimals)}</span>
+          <button
+            type="button"
+            className="stepper-btn"
+            aria-label={`Increase ${field.label}`}
+            disabled={value >= field.max}
+            onClick={() => nudge(1)}
+          >
+            +
+          </button>
+        </div>
       </div>
       <input
         type="range"
@@ -60,7 +97,7 @@ function Field({
         value={value}
         onChange={(event) => onChange({ [field.key]: Number(event.target.value) })}
       />
-    </label>
+    </div>
   );
 }
 

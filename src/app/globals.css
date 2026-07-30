@@ -425,7 +425,44 @@ label {
   color: var(--muted);
 }
 
+.field-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stepper-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #1a2533;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background 160ms var(--ease),
+    border-color 160ms var(--ease);
+}
+
+.stepper-btn:hover:not(:disabled) {
+  border-color: rgba(46, 196, 182, 0.55);
+  background: #223246;
+}
+
+.stepper-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .field-value {
+  min-width: 3.5rem;
+  text-align: center;
   font-family: var(--font-mono);
   color: #cfe5df;
 }

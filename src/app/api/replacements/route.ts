@@ -5,6 +5,7 @@ import {
   isCustomBuildingModel,
   withSynthesizedFootprint,
 } from "@/lib/storage/custom-buildings-storage";
+import { materializeDataUrlModels } from "@/lib/storage/materialize-data-urls";
 import { listReplacements, syncReplacements } from "@/lib/db/replacements";
 
 export const runtime = "nodejs";
@@ -75,10 +76,12 @@ export async function PUT(request: Request): Promise<Response> {
       replacements.push(withSynthesizedFootprint(item));
     }
 
-    const saved = await syncReplacements(replacements);
+    const durable = await materializeDataUrlModels(replacements);
+    const saved = await syncReplacements(durable);
     return NextResponse.json({ replacements: saved });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to save replacements.";
+    console.error("[api/replacements] PUT failed:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

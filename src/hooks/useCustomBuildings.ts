@@ -49,9 +49,17 @@ export function useCustomBuildings() {
   });
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
-  const { schedulePersist, skipNextPersistRef } = useReplacementPersist(setStorageError);
   const storeRef = useRef(store);
   storeRef.current = store;
+
+  const onRewritten = useCallback((replacements: CustomBuildingModel[]) => {
+    setStore((prev) => ({ ...prev, replacements }));
+  }, []);
+
+  const { schedulePersist, skipNextPersistRef } = useReplacementPersist(
+    setStorageError,
+    onRewritten,
+  );
 
   useEffect(() => {
     let cancelled = false;

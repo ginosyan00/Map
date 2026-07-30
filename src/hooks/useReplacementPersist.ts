@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import type { CustomBuildingModel } from "@/types/building";
+import { uploadModelDataUrl } from "@/lib/storage/models-api";
 import { saveReplacementsToApi } from "@/lib/storage/replacements-api";
 
 const SAVE_DEBOUNCE_MS = 600;
@@ -12,8 +13,27 @@ type PersistControls = {
   skipNextPersistRef: React.MutableRefObject<boolean>;
 };
 
+async function ensureDurableUrls(
+  replacements: CustomBuildingModel[],
+): Promise<CustomBuildingModel[]> {
+  const out: CustomBuildingModel[] = [];
+  for (const item of replacements) {
+    if (!item.modelUrl.startsWith("data:")) {
+      out.push(item);
+      continue;
+    }
+    const url = await uploadModelDataUrl(
+      item.modelUrl,
+      item.modelLabel?.endsWith(".glb") ? item.modelLabel : "uploaded.glb",
+    );
+    out.push({ ...item, modelUrl: url, updatedAt: new Date().toISOString() });
+  }
+  return out;
+}
+
 export function useReplacementPersist(
   setStorageError: (message: string | null) => void,
+  onRewritten?: (replacements: CustomBuildingModel[]) => void,
 ): PersistControls {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveGenerationRef = useRef(0);
@@ -25,7 +45,13 @@ export function useReplacementPersist(
       const generation = ++saveGenerationRef.current;
       pendingReplacementsRef.current = null;
       try {
-        await saveReplacementsToApi(replacements);
+        const durable = await ensureDurableUrls(replacements);
+        if (generation !== saveGenerationRef.current) return;
+        if (durable.some((item, i) => item.modelUrl !== replacements[i]?.modelUrl)) {
+          skipNextPersistRef.current = true;
+          onRewritten?.(durable);
+        }
+        await saveReplacementsToApi(durable);
         if (generation !== saveGenerationRef.current) return;
         setStorageError(null);
       } catch (error) {
@@ -37,7 +63,7 @@ export function useReplacementPersist(
         );
       }
     },
-    [setStorageError],
+    [setStorageError, onRewritten],
   );
 
   const schedulePersist = useCallback(

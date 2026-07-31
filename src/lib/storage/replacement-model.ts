@@ -45,6 +45,8 @@ export function buildReplacementModel(
     modelLabel: modelLabelFromUrl(resolvedUrl, modelLabel),
     longitude: building.centerLng,
     latitude: building.centerLat,
+    originLongitude: building.centerLng,
+    originLatitude: building.centerLat,
     altitude,
     rotationX: existing?.rotationX ?? DEFAULT_MODEL_ROTATION_X_DEG,
     rotationY: existing?.rotationY ?? DEFAULT_MODEL_ROTATION_Y_DEG,

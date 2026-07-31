@@ -60,6 +60,9 @@ export type CustomBuildingModel = {
 
   longitude: number;
   latitude: number;
+  /** Placement home position — offsets and Reset transform return here. */
+  originLongitude?: number;
+  originLatitude?: number;
   altitude: number;
 
   rotationX: number;

@@ -16,6 +16,7 @@ import {
   DEFAULT_MODEL_SCALE,
   DEFAULT_APPLY_MODEL_URL,
 } from "@/lib/map/constants";
+import { computeFootprintCenter } from "@/lib/map/building-identification";
 import { useReplacementPersist } from "@/hooks/useReplacementPersist";
 import {
   downloadJson,
@@ -218,16 +219,36 @@ export function useCustomBuildings() {
   }, [committed]);
 
   const resetActiveTransform = useCallback(() => {
-    updateActiveTransform({
-      altitude: DEFAULT_MODEL_ALTITUDE,
-      rotationX: DEFAULT_MODEL_ROTATION_X_DEG,
-      rotationY: DEFAULT_MODEL_ROTATION_Y_DEG,
-      rotationZ: DEFAULT_MODEL_ROTATION_Z_DEG,
-      scale: DEFAULT_MODEL_SCALE,
-      minZoom: DEFAULT_MODEL_MIN_ZOOM,
-      visible: true,
+    setDraft((prev) => {
+      if (!selectedBuildingId) return prev;
+      return prev.map((r) => {
+        if (r.id !== selectedBuildingId) return r;
+        let originLng = r.longitude;
+        let originLat = r.latitude;
+        if (Number.isFinite(r.originLongitude) && Number.isFinite(r.originLatitude)) {
+          originLng = r.originLongitude as number;
+          originLat = r.originLatitude as number;
+        } else if (r.footprintGeometry) {
+          const center = computeFootprintCenter(r.footprintGeometry);
+          originLng = center[0];
+          originLat = center[1];
+        }
+        return {
+          ...r,
+          longitude: originLng,
+          latitude: originLat,
+          altitude: DEFAULT_MODEL_ALTITUDE,
+          rotationX: DEFAULT_MODEL_ROTATION_X_DEG,
+          rotationY: DEFAULT_MODEL_ROTATION_Y_DEG,
+          rotationZ: DEFAULT_MODEL_ROTATION_Z_DEG,
+          scale: DEFAULT_MODEL_SCALE,
+          minZoom: DEFAULT_MODEL_MIN_ZOOM,
+          visible: true,
+          updatedAt: new Date().toISOString(),
+        };
+      });
     });
-  }, [updateActiveTransform]);
+  }, [selectedBuildingId]);
 
   const saveDraft = useCallback(async () => {
     const next = draft.filter((item) => !pendingDeleteIds.includes(item.id));
